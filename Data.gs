@@ -136,6 +136,17 @@ function lerLancs_() {
   lerAba_(ABA.lanc).forEach(function (r) { if (r[0] !== '' && r[1] !== '') out.push(lancDeLinha_(r)); });
   return out;
 }
+// Lê só as últimas linhas (os lançamentos novos entram no fim da aba). Bem mais rápido no celular.
+function lerLancsFinal_(n) {
+  var sh = aba_(ABA.lanc), ult = sh.getLastRow();
+  if (ult < 2) return [];
+  var ini = Math.max(2, ult - n + 1);
+  var out = [];
+  sh.getRange(ini, 1, ult - ini + 1, CABECALHO.Lancamentos.length).getValues().forEach(function (r) {
+    if (r[0] !== '' && r[1] !== '') out.push(lancDeLinha_(r));
+  });
+  return out;
+}
 function linhaDoId_(id) {
   var sh = aba_(ABA.lanc), n = sh.getLastRow();
   if (n < 2) return -1;

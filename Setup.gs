@@ -51,6 +51,8 @@ var SEED_DEPARA = [
 ];
 var CAT_RENDIMENTO = 'Rendimento de aplicações';
 var CAT_CARTAO = 'Pagamento de fatura';
+var CAT_ANTECIPACAO = 'Antecipação';
+var CAT_DEVOLUCAO = 'Devolução antecipação';
 // Só importa o que for desta data em diante (os saldos informados começam em jan/2024)
 var IMPORT_DESDE = '2024-01-01';
 

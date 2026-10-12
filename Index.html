@@ -180,6 +180,7 @@ function ir(tab) {
 function memo(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 
 function vLancar() {
+  S.busca = null;
   const meioPadrao = memo('meio') && contaDe(memo('meio')) ? memo('meio') : (S.cad.contas.find(c => c.ativo && c.classe === 'corrente') || {}).chave;
   const descs = [...new Set(S.recentes.map(l => l.desc))].slice(0, 60);
   $('#view').innerHTML = `
@@ -197,9 +198,12 @@ function vLancar() {
     </div>
     <div id="n_dest_box" style="display:none"><label id="n_dest_lbl">Conta de destino</label><select id="n_dest">${optContas('', true)}</select></div>
     <label style="display:flex;align-items:center;margin-top:14px;color:var(--tx)"><input type="checkbox" id="n_prev"> Ainda não foi pago (previsto)</label>
+    <div class="row" style="margin-top:8px"><div><label>Parcelas</label><input id="n_par" type="number" min="1" max="60" value="1" inputmode="numeric"></div>
+      <div id="n_par_box" style="visibility:hidden"><label>O valor informado é</label><select id="n_par_tipo"><option value="parcela">de cada parcela</option><option value="total">do total</option></select></div></div>
     <button class="pri full" id="n_salvar" style="margin-top:12px">Salvar</button>
   </div>
-  <h2>Últimos lançamentos</h2>
+  <h2>Lançamentos</h2>
+  <input id="n_busca" type="search" placeholder="Buscar por descrição, categoria ou conta" style="margin-bottom:10px">
   <div class="card lista" id="n_lista"></div>`;
   $('#n_cat').value = memo('cat') && catDe(memo('cat')) ? memo('cat') : $('#n_cat').value;
   atualizaDestino();
@@ -210,7 +214,13 @@ function vLancar() {
     if (l && catDe(l.categoria)) { $('#n_cat').value = l.categoria; $('#n_meio').value = l.meio; atualizaDestino(); }
   };
   $('#n_salvar').onclick = salvarNovo;
-  $('#n_lista').onclick = e => { const it = e.target.closest('[data-id]'); if (it) editar(S.recentes.find(l => l.id === it.dataset.id)); };
+  $('#n_par').oninput = () => { $('#n_par_box').style.visibility = (+$('#n_par').value > 1) ? 'visible' : 'hidden'; };
+  let tb; $('#n_busca').oninput = e => {
+    clearTimeout(tb); const t = e.target.value.trim();
+    if (!t) { S.busca = null; listaRecentes(); return; }
+    tb = setTimeout(async () => { try { const r = await api('api_buscar', t); if ($('#n_busca').value.trim() === t) { S.busca = r; listaRecentes(); } } catch (er) { falha(er); } }, 400);
+  };
+  $('#n_lista').onclick = e => { const it = e.target.closest('[data-id]'); if (it) editar((S.busca || S.recentes).find(l => l.id === it.dataset.id)); };
   listaRecentes();
 }
 function atualizaDestino() {
@@ -230,7 +240,8 @@ function itemLanc(l) {
 }
 function listaRecentes() {
   const el = $('#n_lista'); if (!el) return;
-  el.innerHTML = S.recentes.length ? S.recentes.slice(0, 25).map(itemLanc).join('') : '<div class="vazio">Nada lançado ainda.</div>';
+  const fonte = S.busca || S.recentes;
+  el.innerHTML = fonte.length ? fonte.slice(0, S.busca ? 60 : 25).map(itemLanc).join('') : `<div class="vazio">${S.busca ? 'Nada encontrado.' : 'Nada lançado ainda.'}</div>`;
 }
 async function salvarNovo() {
   const valor = num($('#n_valor').value);
@@ -239,7 +250,16 @@ async function salvarNovo() {
   const l = { data: $('#n_data').value, desc: $('#n_desc').value, categoria: $('#n_cat').value, meio: $('#n_meio').value, destino: $('#n_dest').value,
     previsto: prev ? valor : null, efetivo: prev ? null : valor };
   const btn = $('#n_salvar'); btn.disabled = true; btn.textContent = 'Salvando…';
+  const par = Math.floor(+$('#n_par').value || 1);
   try {
+    if (par > 1) {
+      const rp = await api('api_salvarParcelado', l, par, { previsto: prev, valorEhTotal: $('#n_par_tipo').value === 'total' });
+      rp.lancamentos.forEach(x => { x.natureza = x.natureza || (catDe(x.categoria) || {}).natureza; S.recentes.push(x); });
+      S.recentes.sort((a, b) => a.data < b.data ? 1 : a.data > b.data ? -1 : 0);
+      memo('meio', l.meio); memo('cat', l.categoria);
+      $('#n_valor').value = ''; $('#n_desc').value = ''; $('#n_prev').checked = false; $('#n_par').value = 1; $('#n_par_box').style.visibility = 'hidden';
+      toast(par + ' parcelas lançadas'); listaRecentes(); btn.disabled = false; btn.textContent = 'Salvar'; return;
+    }
     const r = await api('api_salvarLancamento', l, {});
     const sv = r.lancamento; sv.natureza = sv.natureza || (catDe(sv.categoria) || {}).natureza;
     S.recentes.unshift(sv); S.recentes.sort((a, b) => a.data < b.data ? 1 : a.data > b.data ? -1 : 0);
@@ -415,13 +435,15 @@ function vResumo() {
 const CLASSES = [['corrente', 'Contas correntes'], ['dinheiro', 'Dinheiro'], ['beneficio', 'Benefícios'], ['aplicacao', 'Aplicações'], ['emprestimo', 'Emprestado (a receber)'], ['cartao', 'Cartões (a pagar)'], ['moeda', 'Moeda estrangeira'], ['outro', 'Outros']];
 function vSaldos() {
   $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
-  api('api_saldos', S.hoje).then(lista => {
+  Promise.all([api('api_saldos', S.hoje), api('api_pendencias')]).then(([lista, pend]) => {
     if (S.tab !== 'saldos') return;
     const soma = cl => lista.filter(x => cl.includes(x.classe)).reduce((s, x) => s + x.real, 0);
     const disp = soma(['corrente', 'dinheiro', 'beneficio']), apl = soma(['aplicacao']), emp = soma(['emprestimo']), cart = soma(['cartao']);
     $('#view').innerHTML = `
     <div class="stats"><div class="stat"><small>Disponível</small><b>${brl(disp)}</b></div><div class="stat"><small>Aplicado</small><b>${brl(apl)}</b></div>
     <div class="stat"><small>Cartões a pagar</small><b class="neg">${brl(-cart)}</b></div><div class="stat"><small>Total (com emprestado)</small><b>${brl(disp + apl + emp + cart)}</b></div></div>
+    ${pend.antecipacao.lancamentos ? `<div class="card"><h2>Antecipações a receber</h2><div class="stat" style="border:0;padding:0"><b class="${pend.antecipacao.saldo > 0 ? 'neg' : ''}">${brl(pend.antecipacao.saldo)}</b>
+      <small>adiantado ${brl(pend.antecipacao.adiantado)} · devolvido ${brl(pend.antecipacao.devolvido)}</small></div></div>` : ''}
     ${CLASSES.map(([cl, nome]) => {
       const xs = lista.filter(x => x.classe === cl); if (!xs.length) return '';
       return `<h2>${nome}</h2><div class="card lista">${xs.map(x => `<div class="it" data-ex="${esc(x.chave)}"><div class="m"><div>${esc(x.chave)}</div>
@@ -459,6 +481,7 @@ function registrarSaldo(chave) {
 // =====================================================
 // CARTÕES
 // =====================================================
+const addDia30 = () => { const d = new Date(S.hoje + 'T12:00:00'); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); };
 function vFaturas() {
   $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
   api('api_faturas').then(gs => {
@@ -470,11 +493,26 @@ function vFaturas() {
       <div class="lista" style="margin-top:8px">${g.faturas.length ? g.faturas.map(f => `
         <div class="it" style="flex-wrap:wrap" data-it="${esc(g.chave)}|${f.id}"><div class="m"><div>Fatura de ${MESES[+f.id.slice(5, 7) - 1]}/${f.id.slice(2, 4)}
           <span class="tag ${f.status === 'paga' ? 'ok' : f.status === 'aberta' ? '' : 'warn'}">${f.status}</span></div>
-          <small>fecha ${dm(f.fechamento)} · vence ${dm(f.vencimento)} · ${f.itens} compra(s)${f.divergente ? ' · pagamento agendado com valor diferente' : ''}</small></div>
+          <small>fecha ${dm(f.fechamento)} · vence ${dm(f.vencimento)} · ${f.itens} compra(s)${f.pago ? ' · pago ' + num2(f.pago) : ''}${f.status === 'paga em parte' ? ' · falta ' + num2(f.restante) : ''}${f.divergente ? ' · agendado ' + num2(f.agendado) : ''}</small></div>
           <div class="v">${num2(f.total)}</div>
-          ${f.status !== 'paga' && (f.status === 'fechada' || f.status === 'agendada' || f.status === 'aberta') ? `<button class="mini" style="margin-left:auto" data-pg="${esc(g.chave)}|${f.id}">${f.pagamento ? 'Atualizar' : 'Gerar'} pagamento</button>` : ''}</div>`).join('') : '<div class="vazio">Sem compras neste cartão.</div>'}</div></div>`).join('')
+          ${f.status === 'agendada' && f.pagamento ? `<div style="flex-basis:100%;display:flex;gap:8px;justify-content:flex-end"><button class="mini" data-ok="${esc(f.pagamento.id)}|${f.pagamento.previsto}|${f.pagamento.data}">Confirmar pagamento</button><button class="mini" data-rm="${esc(f.pagamento.id)}">Remover agendamento</button></div>`
+            : (f.status !== 'paga' && f.vencimento >= addDia30() ? `<div style="flex-basis:100%;text-align:right"><button class="mini" data-pg="${esc(g.chave)}|${f.id}">Gerar pagamento</button></div>` : '')}</div>`).join('') : '<div class="vazio">Sem compras neste cartão.</div>'}</div></div>`).join('')
       : '<div class="vazio">Nenhum cartão cadastrado.</div>';
     $('#view').onclick = async e => {
+      const ok = e.target.closest('[data-ok]'), rm = e.target.closest('[data-rm]');
+      if (ok) {
+        e.stopPropagation(); const [id, prev, data] = ok.dataset.ok.split('|');
+        abrir(`<h2>Confirmar pagamento da fatura</h2><div class="row"><div><label>Data</label><input type="date" id="o_data" value="${data}"></div><div><label>Valor pago</label><input id="o_val" inputmode="decimal" value="${num2(+prev)}"></div></div>
+          <p class="sub">Isso baixa o valor da conta corrente na data informada.</p><div class="acoes"><button class="pri" id="o_ok">Confirmar</button><button class="sec" onclick="fechar()">Cancelar</button></div>`);
+        $('#o_ok').onclick = async () => { try { await api('api_confirmarPagamento', id, num($('#o_val').value), $('#o_data').value); fechar(); toast('Pagamento confirmado'); vFaturas(); } catch (er) { falha(er); } };
+        return;
+      }
+      if (rm) {
+        e.stopPropagation();
+        if (await perguntar('Remover o pagamento agendado desta fatura?', ['Remover', 'Cancelar']) !== 0) return;
+        try { await api('api_excluirLancamento', rm.dataset.rm); toast('Removido'); vFaturas(); } catch (er) { falha(er); }
+        return;
+      }
       const pg = e.target.closest('[data-pg]');
       if (pg) {
         e.stopPropagation(); const [ch, id] = pg.dataset.pg.split('|');
@@ -507,7 +545,7 @@ function mRec() {
     <div class="row"><input type="month" id="g_mes" value="${mesAtual}"><button class="pri" id="g_go">Gerar</button></div>
     <p class="sub">Pode rodar mais de uma vez: o que já foi gerado não duplica.</p></div>
   <div class="card lista">${S.recs.length ? S.recs.map(r => `<div class="it" data-r="${esc(r.id)}"><div class="d">dia ${r.dia}</div><div class="m"><div>${esc(r.desc)}${r.ativo ? '' : '<span class="tag">inativa</span>'}</div>
-    <small>${esc(r.meio)} · ${esc(r.categoria)} · ${r.n} mes(es) desde ${r.inicio.slice(5)}/${r.inicio.slice(0, 4)}</small></div><div class="v">${num2(r.previsto)}</div></div>`).join('') : '<div class="vazio">Nenhuma recorrência.</div>'}</div>
+    <small>${esc(r.meio)} · ${esc(r.categoria)} · ${r.n ? r.n + ' mes(es)' : 'sem fim'} desde ${r.inicio.slice(5)}/${r.inicio.slice(0, 4)}</small></div><div class="v">${num2(r.previsto)}</div></div>`).join('') : '<div class="vazio">Nenhuma recorrência.</div>'}</div>
   <button class="sec full" id="r_nova">+ Nova recorrência</button>`;
   $('#g_go').onclick = async () => {
     try {
@@ -517,7 +555,7 @@ function mRec() {
     } catch (e) { falha(e); }
   };
   $('#m_corpo').onclick = e => { const it = e.target.closest('[data-r]'); if (it) formRec(S.recs.find(r => r.id === it.dataset.r)); };
-  $('#r_nova').onclick = () => formRec({ id: '', desc: '', meio: '', categoria: '', destino: '', previsto: 0, dia: 5, inicio: mesAtual, n: 12, ativo: true });
+  $('#r_nova').onclick = () => formRec({ id: '', desc: '', meio: '', categoria: '', destino: '', previsto: 0, dia: 5, inicio: mesAtual, n: 0, ativo: true });
 }
 function formRec(r) {
   abrir(`<h2>${r.id ? 'Editar' : 'Nova'} recorrência</h2>
@@ -526,7 +564,7 @@ function formRec(r) {
   <label>Conta / meio</label><select id="f_meio">${optContas(r.meio)}</select>
   <div id="f_dbox"><label>Outra conta (opcional)</label><select id="f_dest">${optContas(r.destino, true)}</select></div>
   <div class="row"><div><label>Valor previsto</label><input id="f_val" inputmode="decimal" value="${num2(r.previsto)}"></div><div><label>Dia</label><input id="f_dia" type="number" min="1" max="31" value="${r.dia}"></div></div>
-  <div class="row"><div><label>Primeiro mês</label><input id="f_ini" type="month" value="${r.inicio}"></div><div><label>Nº de meses</label><input id="f_n" type="number" min="1" value="${r.n}"></div></div>
+  <div class="row"><div><label>Primeiro mês</label><input id="f_ini" type="month" value="${r.inicio}"></div><div><label>Nº de meses (0 = sem fim)</label><input id="f_n" type="number" min="0" value="${r.n}"></div></div>
   <label style="display:flex;align-items:center;color:var(--tx)"><input type="checkbox" id="f_ativo" ${r.ativo ? 'checked' : ''}> Ativa</label>
   <div class="acoes"><button class="pri" id="f_ok">Salvar</button><button class="sec" id="f_x">Cancelar</button>${r.id ? '<button class="dng" id="f_del">Excluir</button>' : ''}</div>`);
   const vis = () => $('#f_dbox').style.display = precisaDestino($('#f_cat').value) ? 'block' : 'none';
@@ -597,11 +635,18 @@ function formCat(c) {
 }
 
 // ---------- início ----------
-api('api_bootstrap').then(b => {
+function aplicaBoot(b) {
   S.cad = { contas: b.contas, categorias: b.categorias, naturezas: b.naturezas };
   S.hoje = b.hoje; S.recentes = b.recentes; S.recs = b.recorrencias; S.planilha = b.planilha;
-  ir('lancar');
-}).catch(e => { $('#view').innerHTML = '<div class="aviso">Não consegui carregar: ' + esc(e.message) + '</div>'; });
+}
+let cacheado = false;
+try { const c = JSON.parse(localStorage.getItem('boot') || 'null'); if (c && c.contas) { aplicaBoot(c); cacheado = true; ir('lancar'); } } catch (e) {}
+api('api_bootstrap').then(b => {
+  try { localStorage.setItem('boot', JSON.stringify(b)); } catch (e) {}
+  aplicaBoot(b);
+  if (!cacheado) ir('lancar');
+  else if (S.tab === 'lancar') listaRecentes();
+}).catch(e => { if (!cacheado) $('#view').innerHTML = '<div class="aviso">Não consegui carregar: ' + esc(e.message) + '</div>'; });
 </script>
 </body>
 </html>

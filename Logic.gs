@@ -192,32 +192,63 @@ var Fin = (function () {
     return { id: closeYm, fechamento: diaNoMes(closeYm, fech), vencimento: diaNoMes(dueYm, venc) };
   }
 
+  function difDias(a, b) {
+    var pa = parseIso(a), pb = parseIso(b);
+    return Math.round((Date.UTC(pb.y, pb.m - 1, pb.d) - Date.UTC(pa.y, pa.m - 1, pa.d)) / 86400000);
+  }
+
   // grupo = cartão principal. Adicionais apontam para ele em "faturaDe".
+  // Pagamentos: lançamentos com destino no cartão. Os gerados pelo app têm ref FAT|...;
+  // os do histórico entram na fatura cujo vencimento fica mais perto (até 15 dias).
   function faturas(grupo, contas, lancs, nat, hoje) {
     var membros = contas.filter(function (c) { return c.chave === grupo.chave || c.faturaDe === grupo.chave; })
       .map(function (c) { return c.chave; });
     var fech = grupo.diaFech || 1, venc = grupo.diaVenc || 10;
     var mapa = {};
+    function nova(id, venc_) {
+      return { id: id, fechamento: diaNoMes(id, fech), vencimento: venc_, total: 0, itens: 0, porCartao: {}, pagamentos: [], pagamento: null };
+    }
     lancs.forEach(function (l) {
       if (membros.indexOf(l.meio) < 0 || l.destino) return;
       var cic = cicloFatura(l.data, fech, venc);
-      var f = mapa[cic.id] || (mapa[cic.id] = { id: cic.id, fechamento: cic.fechamento, vencimento: cic.vencimento, total: 0, itens: 0, porCartao: {}, pagamento: null });
+      var f = mapa[cic.id] || (mapa[cic.id] = nova(cic.id, cic.vencimento));
       var v = -sinalDe(nat, l.natureza) * valorUsado(l);
       f.total += v; f.itens++;
       f.porCartao[l.meio] = round2((f.porCartao[l.meio] || 0) + v);
     });
+    var lista = Object.keys(mapa).map(function (k) { return mapa[k]; });
     lancs.forEach(function (l) {
-      if (!l.ref || l.ref.indexOf('FAT|' + grupo.chave + '|') !== 0) return;
-      var id = l.ref.split('|')[2];
-      var f = mapa[id] || (mapa[id] = { id: id, fechamento: diaNoMes(id, fech), vencimento: l.data, total: 0, itens: 0, porCartao: {}, pagamento: null });
-      f.pagamento = { id: l.id, data: l.data, previsto: l.previsto, efetivo: l.efetivo };
+      if (l.destino !== grupo.chave) return;
+      var alvo = null, ligado = false;
+      if (l.ref && l.ref.indexOf('FAT|' + grupo.chave + '|') === 0) {
+        var id = l.ref.split('|')[2];
+        alvo = mapa[id] || (mapa[id] = nova(id, l.data)); ligado = true;
+        if (lista.indexOf(alvo) < 0) lista.push(alvo);
+      } else {
+        var melhor = 16;
+        lista.forEach(function (f) {
+          var d = Math.abs(difDias(f.vencimento, l.data));
+          if (d < melhor) { melhor = d; alvo = f; }
+        });
+      }
+      if (!alvo) return;
+      var p = { id: l.id, data: l.data, desc: l.desc, previsto: l.previsto, efetivo: l.efetivo, gerado: ligado };
+      alvo.pagamentos.push(p);
+      if (ligado) alvo.pagamento = p;
     });
-    return Object.keys(mapa).sort().reverse().map(function (k) {
-      var f = mapa[k]; f.total = round2(f.total);
-      f.status = f.pagamento && f.pagamento.efetivo != null ? 'paga'
-        : f.pagamento ? 'agendada'
+    return lista.sort(function (a, b) { return a.id < b.id ? 1 : -1; }).map(function (f) {
+      f.total = round2(f.total);
+      var pago = 0, agendado = 0;
+      f.pagamentos.forEach(function (p) {
+        if (p.efetivo != null) pago += p.efetivo; else agendado += (p.previsto || 0);
+      });
+      f.pago = round2(pago); f.agendado = round2(agendado);
+      f.restante = round2(f.total - pago);
+      f.status = pago > 0 && Math.abs(f.restante) < 0.005 ? 'paga'
+        : pago > 0 ? 'paga em parte'
+        : agendado > 0 ? 'agendada'
         : (f.fechamento >= hoje ? 'aberta' : 'fechada');
-      f.divergente = !!(f.pagamento && f.pagamento.efetivo == null && round2(f.pagamento.previsto || 0) !== f.total);
+      f.divergente = agendado > 0 && pago === 0 && Math.abs(agendado - f.total) > 0.005;
       return f;
     });
   }
@@ -226,7 +257,7 @@ var Fin = (function () {
     return {
       data: fat.vencimento, desc: 'Fatura ' + grupo.nome + ' ' + fat.id.slice(5, 7) + '/' + fat.id.slice(0, 4),
       categoria: categoriaCartao, meio: grupo.contaPgto, destino: grupo.chave,
-      previsto: fat.total, efetivo: null, ref: 'FAT|' + grupo.chave + '|' + fat.id
+      previsto: Math.max(0, fat.restante != null ? fat.restante : fat.total), efetivo: null, ref: 'FAT|' + grupo.chave + '|' + fat.id
     };
   }
 
@@ -239,7 +270,7 @@ var Fin = (function () {
     recs.forEach(function (r) {
       if (!r.ativo) return;
       var k = difMeses(r.inicio, ym);
-      if (k < 0 || k >= r.n) return;
+      if (k < 0 || (r.n > 0 && k >= r.n)) return;
       var ref = 'REC|' + r.id + '|' + ym;
       if (existentes[ref]) { jaExistiam++; return; }
       novos.push({
@@ -248,6 +279,27 @@ var Fin = (function () {
       });
     });
     return { novos: novos, jaExistiam: jaExistiam };
+  }
+
+  // ---------- parcelamento ----------
+  // l: {data, desc, categoria, meio, destino, valor}. efetivas: 'todas' | 'primeira' | 'nenhuma'
+  // valorEhTotal: o valor informado é o total da compra (divide em n, a diferença vai na última)
+  function gerarParcelas(l, n, valorEhTotal, efetivas, grupoId) {
+    var total = valorEhTotal ? l.valor : round2(l.valor * n);
+    var base = Math.floor(total / n * 100) / 100;
+    var resto = round2(total - base * n);
+    var ym = l.data.slice(0, 7), dia = +l.data.slice(8);
+    var out = [];
+    for (var k = 0; k < n; k++) {
+      var v = round2(k === n - 1 ? base + resto : base);
+      var efet = efetivas === 'todas' || (efetivas === 'primeira' && k === 0);
+      out.push({
+        data: diaNoMes(addMeses(ym, k), dia), desc: l.desc + ' (' + (k + 1) + '/' + n + ')',
+        categoria: l.categoria, meio: l.meio, destino: l.destino || '',
+        previsto: efet ? null : v, efetivo: efet ? v : null, ref: 'PAR|' + grupoId + '|' + (k + 1) + '/' + n
+      });
+    }
+    return out;
   }
 
   // ---------- importação do legado ----------
@@ -280,7 +332,7 @@ var Fin = (function () {
     var natureza = ctx.categorias[categoria] || alias(ctx.aliasNat, row.categoria);
     if (!ctx.nat[natureza]) return { skip: 'natureza desconhecida: ' + natureza };
     var novaCategoria = ctx.categorias[categoria] ? null : { descricao: categoria, natureza: natureza };
-    if (meio.classe === 'cartao' && natureza === 'Retirada') return { skip: 'saldo de cartão (o pagamento da fatura já cobre)' };
+    if (meio.classe === 'cartao' && natureza === 'Retirada' && categoria === ctx.catFatura) return { skip: 'saldo de cartão (o pagamento da fatura já cobre)' };
     var destino = '', pend = null;
     if (natureza === 'Retirada' && categoria === ctx.catFatura) {
       var d = norm(desc);
@@ -303,6 +355,6 @@ var Fin = (function () {
     ancoraAte: ancoraAte, saldoEm: saldoEm, extrato: extrato, resumo: resumo,
     cicloFatura: cicloFatura, faturas: faturas, pagamentoFatura: pagamentoFatura,
     gerarRecorrencias: gerarRecorrencias, chaveDup: chaveDup, resolverMeio: resolverMeio,
-    converterMovimentacao: converterMovimentacao, alias: alias
+    converterMovimentacao: converterMovimentacao, alias: alias, gerarParcelas: gerarParcelas, difDias: difDias
   };
 })();

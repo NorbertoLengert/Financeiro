@@ -21,12 +21,12 @@ function api_bootstrap() {
   var cad = lerCadastros_();
   var hoje = hoje_();
   var corte = Fin.addDias(hoje, -60);
-  var recentes = lerLancs_().filter(function (l) { return l.data >= corte; });
+  var recentes = lerLancsFinal_(500).filter(function (l) { return l.data >= corte; });
   recentes.sort(function (a, b) { return a.data < b.data ? 1 : a.data > b.data ? -1 : 0; });
   var out = cadastrosParaTela_(cad);
   out.hoje = hoje;
   out.recorrencias = lerRecs_();
-  out.recentes = recentes.slice(0, 40);
+  out.recentes = recentes.slice(0, 60);
   out.planilha = ss_().getUrl();
   return out;
 }
@@ -83,6 +83,65 @@ function aplicarPrevistoFuturo_(o) {
     }
   });
   return n;
+}
+
+// Parcelamento: cria n lançamentos, um por mês, no mesmo dia (ou no último dia, se o mês for menor).
+function api_salvarParcelado(l, n, opts) {
+  opts = opts || {};
+  return comLock_(function () {
+    n = Math.floor(Number(n));
+    if (!(n >= 2 && n <= 60)) throw new Error('Número de parcelas entre 2 e 60.');
+    var cad = lerCadastros_();
+    var valor = Fin.parseNum(opts.previsto ? l.previsto : l.efetivo);
+    if (valor == null || valor <= 0) throw new Error('Informe o valor.');
+    var base = normalizarLanc_({ data: l.data, desc: l.desc, categoria: l.categoria, meio: l.meio, destino: l.destino, efetivo: valor }, cad);
+    var conta = cad.contasMap[base.meio];
+    var efetivas = opts.previsto ? 'nenhuma' : (conta.classe === 'cartao' ? 'todas' : 'primeira');
+    var grupo = novoId_();
+    var parcelas = Fin.gerarParcelas({ data: base.data, desc: base.desc, categoria: base.categoria, meio: base.meio, destino: base.destino, valor: valor },
+      n, !!opts.valorEhTotal, efetivas, grupo);
+    var criados = parcelas.map(function (p) {
+      var o = normalizarLanc_(p, cad); o.id = novoId_(); return o;
+    });
+    var linhas = criados.map(function (o) { return lancParaLinha_(o, cad.nat); });
+    var sh = aba_(ABA.lanc);
+    sh.getRange(sh.getLastRow() + 1, 1, linhas.length, linhas[0].length).setValues(linhas);
+    return { lancamentos: criados };
+  });
+}
+
+function api_buscar(texto) {
+  var palavras = Fin.norm(texto).split(' ').filter(function (x) { return x; });
+  if (!palavras.length) return [];
+  var achados = lerLancs_().filter(function (l) {
+    var alvo = Fin.norm(l.desc + ' ' + l.categoria + ' ' + l.meio + ' ' + l.destino);
+    return palavras.every(function (p) { return alvo.indexOf(p) >= 0; });
+  });
+  achados.sort(function (a, b) { return a.data < b.data ? 1 : a.data > b.data ? -1 : 0; });
+  return achados.slice(0, 60);
+}
+
+// Antecipações: dinheiro adiantado que alguém vai devolver (cartão, viagem pela empresa...)
+function api_pendencias() {
+  var adiantado = 0, devolvido = 0, nA = 0;
+  lerLancs_().forEach(function (l) {
+    if (l.categoria === CAT_ANTECIPACAO) { adiantado += Fin.valorUsado(l); nA++; }
+    else if (l.categoria === CAT_DEVOLUCAO) devolvido += Fin.valorUsado(l);
+  });
+  return { antecipacao: { adiantado: Fin.round2(adiantado), devolvido: Fin.round2(devolvido), saldo: Fin.round2(adiantado - devolvido), lancamentos: nA } };
+}
+
+function api_confirmarPagamento(id, valor, data) {
+  return comLock_(function () {
+    var cad = lerCadastros_();
+    var l = lerLancs_().filter(function (x) { return x.id === id; })[0];
+    if (!l) throw new Error('Pagamento não encontrado.');
+    var v = Fin.parseNum(valor);
+    l.efetivo = v != null ? v : l.previsto;
+    if (data) l.data = data;
+    gravarLanc_(l, cad.nat);
+    return l;
+  });
 }
 
 function api_excluirLancamento(id) {
@@ -210,7 +269,8 @@ function api_gerarPagamentoFatura(chaveGrupo, id) {
     if (!g.contaPgto || !cad.contasMap[g.contaPgto]) throw new Error('Preencha a conta de pagamento do cartão na aba Contas.');
     var fat = Fin.faturas(g, cad.contas, lancs, cad.nat, hoje_()).filter(function (f) { return f.id === id; })[0];
     if (!fat) throw new Error('Fatura não encontrada.');
-    if (fat.pagamento && fat.pagamento.efetivo != null) throw new Error('Esta fatura já está paga.');
+    if (fat.status === 'paga') throw new Error('Esta fatura já está paga.');
+    if (fat.pagamentos.length && !fat.pagamento) throw new Error('Já existe pagamento desta fatura na conta (' + fat.pagamentos.map(function (p) { return p.data; }).join(', ') + '). Não gerei outro para não duplicar.');
     var base = Fin.pagamentoFatura(g, fat, CAT_CARTAO);
     if (fat.pagamento) base.id = fat.pagamento.id;
     var o = normalizarLanc_(base, cad);
@@ -242,7 +302,7 @@ function api_salvarRecorrencia(r) {
     var o = {
       id: r.id || novoId_(), desc: String(r.desc || '').trim(), meio: r.meio, categoria: r.categoria, destino: r.destino || '',
       previsto: Fin.parseNum(r.previsto) || 0, dia: Math.min(31, Math.max(1, Number(r.dia) || 1)),
-      inicio: r.inicio, n: Math.max(1, Number(r.n) || 1), ativo: r.ativo !== false
+      inicio: r.inicio, n: Math.max(0, Math.floor(Number(r.n) || 0)), ativo: r.ativo !== false
     };
     if (!o.desc) throw new Error('Informe a descrição.');
     if (!cad.contasMap[o.meio]) throw new Error('Conta desconhecida.');
