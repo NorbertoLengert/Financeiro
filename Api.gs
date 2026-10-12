@@ -232,16 +232,16 @@ function api_registrarSaldo(chave, data, inst, opts) {
 }
 
 // ---------- cartão ----------
-function gruposCartao_(cad) {
-  return cad.contas.filter(function (c) { return c.ativo && c.classe === 'cartao' && !c.faturaDe; });
+function gruposCartao_(cad, incluirInativos) {
+  return cad.contas.filter(function (c) { return (incluirInativos || c.ativo) && c.classe === 'cartao' && !c.faturaDe; });
 }
 
-function api_faturas() {
+function api_faturas(incluirInativos) {
   var cad = lerCadastros_(), lancs = lerLancs_(), hoje = hoje_();
-  return gruposCartao_(cad).map(function (g) {
+  return gruposCartao_(cad, !!incluirInativos).map(function (g) {
     var adicionais = cad.contas.filter(function (c) { return c.faturaDe === g.chave; }).map(function (c) { return c.chave; });
     return {
-      chave: g.chave, nome: g.nome, diaFech: g.diaFech, diaVenc: g.diaVenc, contaPgto: g.contaPgto, adicionais: adicionais,
+      chave: g.chave, nome: g.nome, ativo: g.ativo, diaFech: g.diaFech, diaVenc: g.diaVenc, contaPgto: g.contaPgto, adicionais: adicionais,
       faturas: Fin.faturas(g, cad.contas, lancs, cad.nat, hoje).slice(0, 8)
     };
   });
@@ -337,6 +337,21 @@ function api_salvarConta(c) {
       c.saldoInicial == null || c.saldoInicial === '' ? '' : Fin.parseNum(c.saldoInicial), isoData_(c.dataSaldoInicial || ''),
       c.faturaDe || '', c.diaFech || '', c.diaVenc || '', c.contaPgto || '']);
     return chave;
+  });
+}
+
+// Ativa ou inativa uma conta (e os cartões adicionais ligados a ela). Não apaga nada do histórico.
+function api_ativarConta(chave, ativo) {
+  return comLock_(function () {
+    var cad = lerCadastros_();
+    if (!cad.contasMap[chave]) throw new Error('Conta desconhecida.');
+    var alvos = cad.contas.filter(function (c) { return c.chave === chave || c.faturaDe === chave; }).map(function (c) { return c.chave; });
+    var sh = aba_(ABA.contas), n = sh.getLastRow();
+    var col = sh.getRange(2, 4, n - 1, 1).getValues(), mudou = 0;
+    for (var i = 0; i < col.length; i++) {
+      if (alvos.indexOf(String(col[i][0])) >= 0) { sh.getRange(i + 2, 6).setValue(ativo ? 'S' : 'N'); mudou++; }
+    }
+    return mudou;
   });
 }
 

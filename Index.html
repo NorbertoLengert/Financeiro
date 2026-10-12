@@ -484,11 +484,13 @@ function registrarSaldo(chave) {
 const addDia30 = () => { const d = new Date(S.hoje + 'T12:00:00'); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); };
 function vFaturas() {
   $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
-  api('api_faturas').then(gs => {
+  const todos = memo('cartoesTodos') === '1';
+  api('api_faturas', todos).then(gs => {
     if (S.tab !== 'faturas') return;
-    gs = gs.filter(g => g.faturas.length || g.diaFech);
-    $('#view').innerHTML = gs.length ? gs.map(g => `
-      <div class="card"><h2>${esc(g.chave)}</h2>
+    gs = gs.filter(g => g.faturas.length || g.diaFech || !g.ativo);
+    const filtro = `<div class="seg"><button data-cf="0" class="${todos ? '' : 'on'}">Só ativos</button><button data-cf="1" class="${todos ? 'on' : ''}">Ativos e inativos</button></div>`;
+    $('#view').innerHTML = filtro + (gs.length ? gs.map(g => `
+      <div class="card"><h2 style="display:flex;align-items:center;gap:8px">${esc(g.chave)}${g.ativo ? '' : '<span class="tag">inativo</span>'}<button class="mini" style="margin-left:auto" data-at="${esc(g.chave)}|${g.ativo ? 0 : 1}">${g.ativo ? 'Inativar' : 'Reativar'}</button></h2>
       <div class="sub">${g.diaFech ? 'Fecha dia ' + g.diaFech + ', vence dia ' + g.diaVenc : 'Preencha fechamento e vencimento na aba Contas da planilha'}${g.contaPgto ? ' · paga com ' + esc(g.contaPgto) : ''}${g.adicionais.length ? '<br>Inclui: ' + g.adicionais.map(esc).join(', ') : ''}</div>
       <div class="lista" style="margin-top:8px">${g.faturas.length ? g.faturas.map(f => `
         <div class="it" style="flex-wrap:wrap" data-it="${esc(g.chave)}|${f.id}"><div class="m"><div>Fatura de ${MESES[+f.id.slice(5, 7) - 1]}/${f.id.slice(2, 4)}
@@ -497,8 +499,17 @@ function vFaturas() {
           <div class="v">${num2(f.total)}</div>
           ${f.status === 'agendada' && f.pagamento ? `<div style="flex-basis:100%;display:flex;gap:8px;justify-content:flex-end"><button class="mini" data-ok="${esc(f.pagamento.id)}|${f.pagamento.previsto}|${f.pagamento.data}">Confirmar pagamento</button><button class="mini" data-rm="${esc(f.pagamento.id)}">Remover agendamento</button></div>`
             : (f.status !== 'paga' && f.vencimento >= addDia30() ? `<div style="flex-basis:100%;text-align:right"><button class="mini" data-pg="${esc(g.chave)}|${f.id}">Gerar pagamento</button></div>` : '')}</div>`).join('') : '<div class="vazio">Sem compras neste cartão.</div>'}</div></div>`).join('')
-      : '<div class="vazio">Nenhum cartão cadastrado.</div>';
+      : '<div class="vazio">Nenhum cartão ' + (todos ? 'cadastrado' : 'ativo') + '.</div>');
     $('#view').onclick = async e => {
+      const cf = e.target.closest('[data-cf]');
+      if (cf) { memo('cartoesTodos', cf.dataset.cf); return vFaturas(); }
+      const at = e.target.closest('[data-at]');
+      if (at) {
+        e.stopPropagation(); const [ch, v] = at.dataset.at.split('|');
+        if (v === '0' && await perguntar('Inativar ' + ch + '? Ele some das listas de lançamento, mas o histórico fica guardado.', ['Inativar', 'Cancelar']) !== 0) return;
+        try { await api('api_ativarConta', ch, v === '1'); await recarregaCad(); toast(v === '1' ? 'Cartão reativado' : 'Cartão inativado'); vFaturas(); } catch (er) { falha(er); }
+        return;
+      }
       const ok = e.target.closest('[data-ok]'), rm = e.target.closest('[data-rm]');
       if (ok) {
         e.stopPropagation(); const [id, prev, data] = ok.dataset.ok.split('|');
