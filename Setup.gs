@@ -2,6 +2,19 @@
  * Setup.gs
  * Menu da planilha, criação das abas e importação do histórico.
  */
+// Edição manual nas abas de cadastro: limpa o cache para o app enxergar na hora.
+function onEdit(e) {
+  try {
+    var n = e && e.range && e.range.getSheet().getName();
+    if (n === 'Contas' || n === 'Categorias' || n === 'Naturezas' || n === 'Tipos' || n === 'DePara') limparCache_();
+  } catch (er) {}
+}
+
+function atualizarCadastros() {
+  limparCache_();
+  try { SpreadsheetApp.getUi().alert('Pronto. O aplicativo vai ler os cadastros de novo na próxima abertura.'); } catch (e) {}
+}
+
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Finanças')
     .addItem('1. Configurar planilha', 'configurarPlanilha')
@@ -10,6 +23,7 @@ function onOpen() {
     .addItem('Importar saldos (aba ImportarSaldos)', 'importarSaldos')
     .addItem('Importar recorrentes (aba ImportarRecorrentes)', 'importarRecorrentes')
     .addSeparator()
+    .addItem('Atualizar cadastros no aplicativo', 'atualizarCadastros')
     .addItem('Mostrar endereço do aplicativo', 'mostrarEndereco')
     .addToUi();
 }
@@ -83,6 +97,7 @@ function configurarPlanilha() {
   aba_(ABA.recs).getRange('F2:F').setNumberFormat('#,##0.00');
   aba_(ABA.contas).getRange('H2:H').setNumberFormat('dd/mm/yyyy');
 
+  limparCache_();
   var msg = 'Planilha configurada.\n\nPróximos passos:\n1. Aba Contas: preencha dia de fechamento, vencimento e conta de pagamento dos cartões, e o saldo inicial das contas.\n2. Cole o histórico na aba Importar e use o menu Finanças.\n3. Implante como App da Web.';
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
 }
@@ -160,6 +175,7 @@ function importarMovimentacao_() {
       var sh = aba_(ABA.lanc);
       sh.getRange(sh.getLastRow() + 1, 1, novas.length, novas[0].length).setValues(novas);
     }
+    limparCache_();
     var linhas = ['Linhas lidas: ' + lidas, 'Importadas: ' + novas.length, 'Já existiam (ignoradas): ' + dups];
     Object.keys(motivos).forEach(function (m) { linhas.push('Puladas (' + m + '): ' + motivos[m]); });
     if (nomesCats.length) linhas.push('Categorias novas criadas: ' + nomesCats.join(', '));
@@ -243,6 +259,7 @@ function importarRecorrentes_() {
       var sh = aba_(ABA.recs);
       sh.getRange(sh.getLastRow() + 1, 1, novas.length, 10).setValues(novas);
     }
+    limparCache_();
     var linhas = ['Importadas: ' + novas.length, 'Já existiam: ' + dups, 'O mês de início foi lido como mês de ' + ano + '.'];
     Object.keys(rej).forEach(function (m) { linhas.push('Rejeitadas (' + m + '): ' + rej[m]); });
     return { importadas: novas.length, duplicadas: dups, rejeitadas: rej, linhas: linhas };

@@ -19,27 +19,36 @@ var CABECALHO = {
 };
 
 // ---------- planilha e conversões ----------
+// Cada chamada ao serviço da planilha custa de dezenas a centenas de milissegundos.
+// Por isso guardamos a planilha, as abas e o cadastro durante a execução.
+var _memo = { ss: null, abas: {}, cad: null };
 function ss_() {
+  if (_memo.ss) return _memo.ss;
   var s = SpreadsheetApp.getActiveSpreadsheet();
   if (!s) {
     var id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
     if (!id) throw new Error('Script não está ligado a uma planilha.');
     s = SpreadsheetApp.openById(id);
   }
+  _memo.ss = s;
   return s;
 }
 function aba_(nome) {
+  if (_memo.abas[nome]) return _memo.abas[nome];
   var sh = ss_().getSheetByName(nome);
   if (!sh) throw new Error('A aba "' + nome + '" não existe. Rode o menu Finanças > Configurar planilha.');
+  _memo.abas[nome] = sh;
   return sh;
 }
 function tz_() { return ss_().getSpreadsheetTimeZone(); }
+// O fuso do script é o mesmo da planilha (appsscript.json), então basta ler a data em JavaScript puro.
+// Antes isso chamava o serviço da planilha uma vez por linha, o que deixava tudo lento.
 function dataIso_(v) {
-  if (v instanceof Date) return Utilities.formatDate(v, tz_(), 'yyyy-MM-dd');
+  if (v instanceof Date) return v.getFullYear() + '-' + Fin.pad(v.getMonth() + 1) + '-' + Fin.pad(v.getDate());
   return v == null ? '' : String(v);
 }
 function mesIso_(v) {
-  if (v instanceof Date) return Utilities.formatDate(v, tz_(), 'yyyy-MM');
+  if (v instanceof Date) return v.getFullYear() + '-' + Fin.pad(v.getMonth() + 1);
   var s = String(v || '');
   return /^\d{4}-\d{2}/.test(s) ? s.slice(0, 7) : '';
 }
@@ -73,7 +82,25 @@ function comLock_(fn) {
 function novoId_() { return Utilities.getUuid().replace(/-/g, '').slice(0, 10); }
 
 // ---------- cadastros ----------
+var CAD_CHAVE = 'cadastros_v3';
+function limparCache_() {
+  _memo.cad = null;
+  try { CacheService.getScriptCache().remove(CAD_CHAVE); } catch (e) {}
+}
+// Cadastros mudam pouco: ficam 10 minutos no cache do Google. Qualquer gravação feita pelo app,
+// pelos importadores ou à mão na planilha (gatilho onEdit) limpa o cache.
 function lerCadastros_() {
+  if (_memo.cad) return _memo.cad;
+  try {
+    var c = CacheService.getScriptCache().get(CAD_CHAVE);
+    if (c) { _memo.cad = JSON.parse(c); return _memo.cad; }
+  } catch (e) {}
+  var cad = lerCadastrosPlanilha_();
+  try { CacheService.getScriptCache().put(CAD_CHAVE, JSON.stringify(cad), 600); } catch (e) {}
+  _memo.cad = cad;
+  return cad;
+}
+function lerCadastrosPlanilha_() {
   var nat = {};
   lerAba_(ABA.nat).forEach(function (r) {
     if (!r[0]) return;

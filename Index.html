@@ -103,8 +103,8 @@ button.mini{font:inherit;font-size:13px;padding:6px 10px;min-height:0;border-rad
 
 <script>
 const S = { cad: null, hoje: '', recentes: [], recs: [], tab: 'lancar', planilha: '',
-  ext: { chave: null, mes: null, soNaoConf: false, dados: null },
-  res: { modo: 'mes', ref: null }, mais: 'rec' };
+  ext: { chave: null, mes: null, soNaoConf: false, dados: null, modo: 'conta' },
+  res: { modo: 'mes', ref: null }, mais: 'rec', cache: {}, cons: {} };
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const brl = v => v == null ? '' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -123,8 +123,15 @@ function busy(d) { ocupado += d; $('#busy').classList.toggle('on', ocupado > 0);
 function api(fn, ...args) {
   busy(1);
   return new Promise((ok, err) => google.script.run
-    .withSuccessHandler(r => { busy(-1); ok(r); })
+    .withSuccessHandler(r => { busy(-1); if (/^api_(salvar|excluir|conferir|registrar|gerar|confirmar|ativar)/.test(fn)) S.cache = {}; ok(r); })
     .withFailureHandler(e => { busy(-1); err(new Error((e && e.message) || String(e))); })[fn](...args));
+}
+// Mostra na hora o que já foi carregado antes e atualiza em seguida (some o "Carregando").
+function swrp(key, fetcher) {
+  return { then(cb) {
+    const c = S.cache[key]; if (c) cb(c);
+    return fetcher().then(d => { S.cache[key] = d; cb(d); });
+  } };
 }
 let tt;
 function toast(msg, erro) {
@@ -218,9 +225,9 @@ function vLancar() {
   let tb; $('#n_busca').oninput = e => {
     clearTimeout(tb); const t = e.target.value.trim();
     if (!t) { S.busca = null; listaRecentes(); return; }
-    tb = setTimeout(async () => { try { const r = await api('api_buscar', t); if ($('#n_busca').value.trim() === t) { S.busca = r; listaRecentes(); } } catch (er) { falha(er); } }, 400);
+    tb = setTimeout(async () => { try { const r = await api('api_buscar', t); if ($('#n_busca') && $('#n_busca').value.trim() === t) { S.busca = r; listaRecentes(); } } catch (er) { falha(er); } }, 400);
   };
-  $('#n_lista').onclick = e => { const it = e.target.closest('[data-id]'); if (it) editar((S.busca || S.recentes).find(l => l.id === it.dataset.id)); };
+  $('#n_lista').onclick = e => { const it = e.target.closest('[data-id]'); if (it && !it.dataset.id.startsWith('tmp')) editar((S.busca || S.recentes).find(l => l.id === it.dataset.id)); };
   listaRecentes();
 }
 function atualizaDestino() {
@@ -233,8 +240,8 @@ function itemLanc(l) {
   const s = sinalLanc(l), n = S.cad.naturezas.find(x => x.nome === l.natureza), v = valorLanc(l);
   const neutro = !n || (n.efeito !== 'receita' && n.efeito !== 'despesa');
   const cls = neutro ? 'neu' : (s > 0 ? 'pos' : 'neg');
-  return `<div class="it" data-id="${esc(l.id)}"><div class="d">${dm(l.data)}</div>
-    <div class="m"><div class="${l.efetivo == null ? 'pend' : ''}">${esc(l.desc)}${l.efetivo == null ? '<span class="tag warn">previsto</span>' : ''}</div>
+  return `<div class="it" data-id="${esc(l.id)}" style="${l._salvando ? 'opacity:.6' : ''}"><div class="d">${dm(l.data)}</div>
+    <div class="m"><div class="${l.efetivo == null ? 'pend' : ''}">${esc(l.desc)}${l._salvando ? '<span class="tag">salvando…</span>' : ''}${l.efetivo == null ? '<span class="tag warn">previsto</span>' : ''}</div>
     <small>${esc(l.categoria)} · ${esc(l.meio)}${l.destino ? ' → ' + esc(l.destino) : ''}</small></div>
     <div class="v ${cls}">${num2(s * v)}</div></div>`;
 }
@@ -249,25 +256,36 @@ async function salvarNovo() {
   const prev = $('#n_prev').checked;
   const l = { data: $('#n_data').value, desc: $('#n_desc').value, categoria: $('#n_cat').value, meio: $('#n_meio').value, destino: $('#n_dest').value,
     previsto: prev ? valor : null, efetivo: prev ? null : valor };
-  const btn = $('#n_salvar'); btn.disabled = true; btn.textContent = 'Salvando…';
   const par = Math.floor(+$('#n_par').value || 1);
-  try {
-    if (par > 1) {
+  if (par > 1) {
+    const btn = $('#n_salvar'); btn.disabled = true; btn.textContent = 'Salvando…';
+    try {
       const rp = await api('api_salvarParcelado', l, par, { previsto: prev, valorEhTotal: $('#n_par_tipo').value === 'total' });
       rp.lancamentos.forEach(x => { x.natureza = x.natureza || (catDe(x.categoria) || {}).natureza; S.recentes.push(x); });
       S.recentes.sort((a, b) => a.data < b.data ? 1 : a.data > b.data ? -1 : 0);
       memo('meio', l.meio); memo('cat', l.categoria);
       $('#n_valor').value = ''; $('#n_desc').value = ''; $('#n_prev').checked = false; $('#n_par').value = 1; $('#n_par_box').style.visibility = 'hidden';
-      toast(par + ' parcelas lançadas'); listaRecentes(); btn.disabled = false; btn.textContent = 'Salvar'; return;
-    }
-    const r = await api('api_salvarLancamento', l, {});
+      toast(par + ' parcelas lançadas'); listaRecentes();
+    } catch (e) { falha(e); }
+    btn.disabled = false; btn.textContent = 'Salvar';
+    return;
+  }
+  // Lançamento imediato: aparece na lista e o formulário já fica livre; a gravação segue em segundo plano.
+  const campos = { v: $('#n_valor').value, d: $('#n_desc').value, p: $('#n_prev').checked };
+  const tmp = Object.assign({ id: 'tmp' + Date.now() + Math.random(), natureza: (catDe(l.categoria) || {}).natureza, conferido: false, recId: '', ref: '', _salvando: true }, l,
+    { desc: l.desc.trim() || l.categoria });
+  S.recentes.unshift(tmp); S.recentes.sort((a, b) => a.data < b.data ? 1 : a.data > b.data ? -1 : 0);
+  memo('meio', l.meio); memo('cat', l.categoria);
+  $('#n_valor').value = ''; $('#n_desc').value = ''; $('#n_prev').checked = false;
+  listaRecentes(); $('#n_valor').focus();
+  api('api_salvarLancamento', l, {}).then(r => {
     const sv = r.lancamento; sv.natureza = sv.natureza || (catDe(sv.categoria) || {}).natureza;
-    S.recentes.unshift(sv); S.recentes.sort((a, b) => a.data < b.data ? 1 : a.data > b.data ? -1 : 0);
-    memo('meio', l.meio); memo('cat', l.categoria);
-    $('#n_valor').value = ''; $('#n_desc').value = ''; $('#n_prev').checked = false;
-    toast('Lançado'); listaRecentes(); $('#n_valor').focus();
-  } catch (e) { falha(e); }
-  btn.disabled = false; btn.textContent = 'Salvar';
+    const i = S.recentes.indexOf(tmp); if (i >= 0) S.recentes[i] = sv;
+    toast('Lançado'); listaRecentes();
+  }).catch(e => {
+    S.recentes = S.recentes.filter(x => x !== tmp); listaRecentes(); falha(e);
+    if ($('#n_valor') && !$('#n_valor').value) { $('#n_valor').value = campos.v; $('#n_desc').value = campos.d; $('#n_prev').checked = campos.p; }
+  });
 }
 
 function editar(l, aoSalvar) {
@@ -315,21 +333,27 @@ function editar(l, aoSalvar) {
 // =====================================================
 // EXTRATO E CONCILIAÇÃO
 // =====================================================
+function segExtrato() {
+  return `<div class="seg"><button data-xm="conta" class="${S.ext.modo === 'conta' ? 'on' : ''}">Por conta</button><button data-xm="cat" class="${S.ext.modo === 'cat' ? 'on' : ''}">Por categoria</button></div>`;
+}
+function ligaSegExtrato() { document.querySelectorAll('[data-xm]').forEach(b => b.onclick = () => { S.ext.modo = b.dataset.xm; vExtrato(); }); }
 function vExtrato() {
   const E = S.ext;
+  if (E.modo === 'cat') return vConsulta();
   if (!E.mes) E.mes = S.hoje.slice(0, 7);
   if (!E.chave) E.chave = (S.cad.contas.find(c => c.ativo && c.classe === 'corrente') || S.cad.contas[0]).chave;
-  $('#view').innerHTML = `
+  $('#view').innerHTML = segExtrato() + `
   <div class="card">
     <select id="x_conta">${optContas(E.chave)}</select>
     <div class="nav-mes"><button class="mini" id="x_ant">‹</button><strong>${mesNome(E.mes)}</strong><button class="mini" id="x_prox">›</button></div>
   </div>
   <div id="x_corpo"><div class="vazio">Carregando…</div></div>`;
+  ligaSegExtrato();
   $('#x_conta').onchange = e => { E.chave = e.target.value; vExtrato(); };
   $('#x_ant').onclick = () => { E.mes = addMes(E.mes, -1); vExtrato(); };
   $('#x_prox').onclick = () => { E.mes = addMes(E.mes, 1); vExtrato(); };
   const meuMes = E.mes, minhaConta = E.chave;
-  api('api_extrato', E.chave, E.mes + '-01', ultDia(E.mes)).then(d => {
+  swrp('x|' + E.chave + '|' + E.mes, () => api('api_extrato', E.chave, E.mes + '-01', ultDia(E.mes))).then(d => {
     if (S.tab !== 'extrato' || E.mes !== meuMes || E.chave !== minhaConta) return;
     E.dados = d; desenhaExtrato();
   }).catch(falha);
@@ -391,6 +415,68 @@ async function conferir(rendimento) {
 }
 
 // =====================================================
+// CONSULTA POR CATEGORIA E PERÍODO
+// =====================================================
+function aplicaPreset(C, p) {
+  const ref = S.hoje.slice(0, 7), ano = S.hoje.slice(0, 4);
+  C.preset = p;
+  if (p === 'mes') { C.ini = ref + '-01'; C.fim = ultDia(ref); }
+  else if (p === 'mesant') { const m = addMes(ref, -1); C.ini = m + '-01'; C.fim = ultDia(m); }
+  else if (p === '3m') { C.ini = addMes(ref, -2) + '-01'; C.fim = ultDia(ref); }
+  else if (p === '12m') { C.ini = addMes(ref, -11) + '-01'; C.fim = ultDia(ref); }
+  else if (p === 'ano') { C.ini = ano + '-01-01'; C.fim = ano + '-12-31'; }
+  else if (p === 'anoant') { const a = String(+ano - 1); C.ini = a + '-01-01'; C.fim = a + '-12-31'; }
+}
+function vConsulta() {
+  const C = S.cons;
+  if (!C.ini) { aplicaPreset(C, 'mes'); C.categoria = ''; C.natureza = ''; C.conta = ''; C.texto = ''; C.status = 'todos'; }
+  const cats = S.cad.categorias.filter(c => !C.natureza || c.natureza === C.natureza).sort((a, b) => ptSort(a.descricao, b.descricao));
+  const pers = [['mes', 'Este mês'], ['mesant', 'Mês passado'], ['3m', 'Últimos 3 meses'], ['12m', 'Últimos 12 meses'], ['ano', 'Este ano'], ['anoant', 'Ano passado'], ['custom', 'Datas à escolha']];
+  $('#view').innerHTML = segExtrato() + `
+  <div class="card">
+    <div class="row"><div><label>Tipo</label><select id="q_nat"><option value="">Todos</option>${S.cad.naturezas.map(n => `<option ${n.nome === C.natureza ? 'selected' : ''}>${esc(n.nome)}</option>`).join('')}</select></div>
+    <div><label>Categoria</label><select id="q_cat"><option value="">Todas</option>${cats.map(c => `<option ${c.descricao === C.categoria ? 'selected' : ''}>${esc(c.descricao)}</option>`).join('')}</select></div></div>
+    <div class="row"><div><label>Período</label><select id="q_per">${pers.map(([v, t]) => `<option value="${v}" ${v === C.preset ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div><label>Situação</label><select id="q_st"><option value="todos" ${C.status === 'todos' ? 'selected' : ''}>Pagos e previstos</option><option value="pagos" ${C.status === 'pagos' ? 'selected' : ''}>Só pagos</option><option value="previstos" ${C.status === 'previstos' ? 'selected' : ''}>Só previstos</option></select></div></div>
+    <div class="row" style="${C.preset === 'custom' ? '' : 'display:none'}" id="q_dt"><div><label>De</label><input type="date" id="q_ini" value="${C.ini}"></div><div><label>Até</label><input type="date" id="q_fim" value="${C.fim}"></div></div>
+    <div class="row"><div><label>Conta</label><select id="q_conta">${optContas(C.conta, true)}</select></div><div><label>Parte da descrição</label><input id="q_txt" type="search" value="${esc(C.texto)}" placeholder="opcional"></div></div>
+  </div>
+  <div id="q_corpo"><div class="vazio">Carregando…</div></div>`;
+  ligaSegExtrato();
+  const ler = () => { C.natureza = $('#q_nat').value; C.categoria = $('#q_cat').value; C.conta = $('#q_conta').value; C.status = $('#q_st').value; C.texto = $('#q_txt').value.trim(); };
+  $('#q_nat').onchange = () => { ler(); C.categoria = ''; vConsulta(); };
+  $('#q_cat').onchange = () => { ler(); rodaConsulta(); };
+  $('#q_conta').onchange = () => { ler(); rodaConsulta(); };
+  $('#q_st').onchange = () => { ler(); rodaConsulta(); };
+  $('#q_per').onchange = e => { ler(); if (e.target.value === 'custom') { C.preset = 'custom'; $('#q_dt').style.display = ''; } else { aplicaPreset(C, e.target.value); $('#q_dt').style.display = 'none'; rodaConsulta(); } };
+  $('#q_ini').onchange = e => { C.ini = e.target.value; rodaConsulta(); };
+  $('#q_fim').onchange = e => { C.fim = e.target.value; rodaConsulta(); };
+  let tq; $('#q_txt').oninput = () => { clearTimeout(tq); tq = setTimeout(() => { ler(); rodaConsulta(); }, 400); };
+  rodaConsulta();
+}
+async function rodaConsulta() {
+  const C = S.cons, minha = JSON.stringify(C);
+  try {
+    const d = await api('api_consultar', { ini: C.ini, fim: C.fim, categoria: C.categoria, natureza: C.natureza, conta: C.conta, texto: C.texto, status: C.status });
+    if (S.tab !== 'extrato' || S.ext.modo !== 'cat' || JSON.stringify(S.cons) !== minha) return;
+    S.consLinhas = d.linhas;
+    const solo = d.entradas === 0 ? 's' : d.saidas === 0 ? 'e' : '';
+    const max = Math.max(1, ...d.porMes.map(m => m.entradas + m.saidas));
+    $('#q_corpo').innerHTML = `
+    <div class="stats">
+      ${d.saidas || !solo ? `<div class="stat"><small>Saídas</small><b class="neg">${brl(d.saidas)}</b>${d.saidas !== d.saidasPagas ? `<small>pagas ${brl(d.saidasPagas)}</small>` : ''}</div>` : ''}
+      ${d.entradas || !solo ? `<div class="stat"><small>Entradas</small><b class="pos">${brl(d.entradas)}</b>${d.entradas !== d.entradasPagas ? `<small>pagas ${brl(d.entradasPagas)}</small>` : ''}</div>` : ''}
+      ${!solo ? `<div class="stat"><small>Diferença</small><b class="${d.entradas - d.saidas >= 0 ? 'pos' : 'neg'}">${brl(d.entradas - d.saidas)}</b></div>` : ''}
+      <div class="stat"><small>Lançamentos</small><b>${d.qtd}</b>${d.qtd ? `<small>média ${brl((d.entradas + d.saidas) / Math.max(1, d.porMes.length))} por mês</small>` : ''}</div>
+    </div>
+    ${d.porMes.length > 1 ? `<div class="card"><h2>Mês a mês</h2>${d.porMes.map(m => `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between"><span>${m.ym.slice(5)}/${m.ym.slice(0, 4)}</span><span style="font-variant-numeric:tabular-nums">${num2(m.entradas + m.saidas)}</span></div><div class="barra"><i style="width:${(m.entradas + m.saidas) / max * 100}%"></i></div></div>`).join('')}</div>` : ''}
+    <div class="card lista" id="q_lista">${d.linhas.length ? d.linhas.map(itemLanc).join('') : '<div class="vazio">Nada encontrado com esses filtros.</div>'}</div>
+    ${d.truncado ? '<p class="sub">Mostrando os 300 mais recentes. Os totais acima consideram todos.</p>' : ''}`;
+    $('#q_lista').onclick = e => { const it = e.target.closest('[data-id]'); if (it) editar(S.consLinhas.find(l => l.id === it.dataset.id), rodaConsulta); };
+  } catch (e) { falha(e); }
+}
+
+// =====================================================
 // RESUMO
 // =====================================================
 function periodoResumo() {
@@ -410,13 +496,13 @@ function vResumo() {
   const passo = R.modo === 'ano' ? 12 : 1;
   $('#r_ant').onclick = () => { R.ref = addMes(R.ref, -passo); vResumo(); };
   $('#r_prox').onclick = () => { R.ref = addMes(R.ref, passo); vResumo(); };
-  api('api_resumo', ini, fim).then(d => {
+  swrp('r|' + ini + '|' + fim, () => api('api_resumo', ini, fim)).then(d => {
     if (S.tab !== 'resumo') return;
-    const bloco = (tit, g, cls) => {
+    const bloco = (tit, g, cls, nat) => {
       const max = Math.max(1, ...g.itens.map(i => Math.max(i.projetado, i.realizado)));
       return `<div class="card"><h2>${tit} <span class="${cls}" style="float:right">${brl(g.realizado)}</span></h2>
         ${g.previsto || g.projetado !== g.realizado ? `<div class="sub" style="margin:-6px 0 8px">previsto ${brl(g.previsto)} · com o que falta pagar ${brl(g.projetado)}</div>` : ''}
-        ${g.itens.length ? g.itens.map(i => `<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(i.categoria)}</span><span style="font-variant-numeric:tabular-nums">${num2(i.realizado)}${i.previsto ? `<span class="sub"> / prev. ${num2(i.previsto)}</span>` : ''}</span></div>
+        ${g.itens.length ? g.itens.map(i => `<div style="margin:10px 0;cursor:pointer" data-cat="${esc(i.categoria)}" data-nat="${nat}"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(i.categoria)}</span><span style="font-variant-numeric:tabular-nums">${num2(i.realizado)}${i.previsto ? `<span class="sub"> / prev. ${num2(i.previsto)}</span>` : ''}</span></div>
           <div class="barra"><i style="width:${Math.max(0, Math.min(100, i.realizado / max * 100))}%"></i></div></div>`).join('') : '<div class="vazio">Nada neste período.</div>'}</div>`;
     };
     $('#r_corpo').innerHTML = `
@@ -424,8 +510,13 @@ function vResumo() {
       <div class="stat"><small>Despesas</small><b class="neg">${brl(d.despesas.realizado)}</b></div>
       <div class="stat"><small>Resultado</small><b class="${d.resultadoRealizado >= 0 ? 'pos' : 'neg'}">${brl(d.resultadoRealizado)}</b></div>
       <div class="stat"><small>Com o que falta pagar</small><b>${brl(d.resultadoProjetado)}</b></div></div>
-      ${bloco('Receitas', d.receitas, 'pos')}${bloco('Despesas', d.despesas, 'neg')}
-      <p class="sub">Transferências, aplicações, resgates e pagamento de fatura ficam de fora: não são receita nem despesa.</p>`;
+      ${bloco('Receitas', d.receitas, 'pos', 'Receita')}${bloco('Despesas', d.despesas, 'neg', 'Despesa')}
+      <p class="sub">Transferências, aplicações, resgates e pagamento de fatura ficam de fora: não são receita nem despesa. Toque numa categoria para ver os lançamentos.</p>`;
+    $('#r_corpo').onclick = e => {
+      const r = e.target.closest('[data-cat]'); if (!r) return;
+      S.cons = { preset: 'custom', ini, fim, categoria: r.dataset.cat, natureza: r.dataset.nat, conta: '', texto: '', status: 'todos' };
+      S.ext.modo = 'cat'; ir('extrato');
+    };
   }).catch(falha);
 }
 
@@ -435,7 +526,7 @@ function vResumo() {
 const CLASSES = [['corrente', 'Contas correntes'], ['dinheiro', 'Dinheiro'], ['beneficio', 'Benefícios'], ['aplicacao', 'Aplicações'], ['emprestimo', 'Emprestado (a receber)'], ['cartao', 'Cartões (a pagar)'], ['moeda', 'Moeda estrangeira'], ['outro', 'Outros']];
 function vSaldos() {
   $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
-  Promise.all([api('api_saldos', S.hoje), api('api_pendencias')]).then(([lista, pend]) => {
+  swrp('s', () => Promise.all([api('api_saldos', S.hoje), api('api_pendencias')])).then(([lista, pend]) => {
     if (S.tab !== 'saldos') return;
     const soma = cl => lista.filter(x => cl.includes(x.classe)).reduce((s, x) => s + x.real, 0);
     const disp = soma(['corrente', 'dinheiro', 'beneficio']), apl = soma(['aplicacao']), emp = soma(['emprestimo']), cart = soma(['cartao']);
@@ -485,7 +576,7 @@ const addDia30 = () => { const d = new Date(S.hoje + 'T12:00:00'); d.setDate(d.g
 function vFaturas() {
   $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
   const todos = memo('cartoesTodos') === '1';
-  api('api_faturas', todos).then(gs => {
+  swrp('f|' + todos, () => api('api_faturas', todos)).then(gs => {
     if (S.tab !== 'faturas') return;
     gs = gs.filter(g => g.faturas.length || g.diaFech || !g.ativo);
     const filtro = `<div class="seg"><button data-cf="0" class="${todos ? '' : 'on'}">Só ativos</button><button data-cf="1" class="${todos ? 'on' : ''}">Ativos e inativos</button></div>`;

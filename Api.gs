@@ -177,6 +177,11 @@ function api_extrato(chave, ini, fim) {
   return r;
 }
 
+function api_consultar(f) {
+  var cad = lerCadastros_();
+  return Fin.consultar(lerLancs_(), cad.nat, f || {});
+}
+
 function api_resumo(ini, fim) {
   var cad = lerCadastros_();
   return Fin.resumo(lerLancs_(), cad.nat, ini, fim);
@@ -336,6 +341,8 @@ function api_salvarConta(c) {
     gravarLinhaPorChave_(ABA.contas, 4, chave, [ordem, nome, tipo, chave, classe, c.ativo === false ? 'N' : 'S',
       c.saldoInicial == null || c.saldoInicial === '' ? '' : Fin.parseNum(c.saldoInicial), isoData_(c.dataSaldoInicial || ''),
       c.faturaDe || '', c.diaFech || '', c.diaVenc || '', c.contaPgto || '']);
+    limparCache_();
+    limparCache_();
     return chave;
   });
 }
@@ -351,6 +358,7 @@ function api_ativarConta(chave, ativo) {
     for (var i = 0; i < col.length; i++) {
       if (alvos.indexOf(String(col[i][0])) >= 0) { sh.getRange(i + 2, 6).setValue(ativo ? 'S' : 'N'); mudou++; }
     }
+    limparCache_();
     return mudou;
   });
 }
@@ -364,6 +372,7 @@ function api_salvarCategoria(c) {
     var atual = cad.categorias[desc];
     var ordem = atual ? atual.ordem : (cad.listaCats.reduce(function (m, x) { return Math.max(m, x.ordem); }, 0) + 1);
     gravarLinhaPorChave_(ABA.cats, 2, desc, [ordem, desc, c.natureza, c.ativo === false ? 'N' : 'S']);
+    limparCache_();
     return desc;
   });
 }

@@ -184,6 +184,39 @@ var Fin = (function () {
     return { receitas: r, despesas: d, resultadoRealizado: round2(r.realizado - d.realizado), resultadoProjetado: round2(r.projetado - d.projetado) };
   }
 
+  // ---------- consulta por categoria e período ----------
+  // f: {ini, fim, categoria, natureza, conta, texto, status: 'todos'|'pagos'|'previstos'}
+  function consultar(lancs, nat, f) {
+    var palavras = norm(f.texto || '').split(' ').filter(function (x) { return x; });
+    var linhas = [], ent = 0, sai = 0, entR = 0, saiR = 0, meses = {};
+    lancs.forEach(function (l) {
+      if (f.ini && l.data < f.ini) return;
+      if (f.fim && l.data > f.fim) return;
+      if (f.categoria && l.categoria !== f.categoria) return;
+      if (f.natureza && l.natureza !== f.natureza) return;
+      if (f.conta && l.meio !== f.conta && l.destino !== f.conta) return;
+      if (f.status === 'pagos' && l.efetivo == null) return;
+      if (f.status === 'previstos' && l.efetivo != null) return;
+      if (palavras.length) {
+        var alvo = norm(l.desc + ' ' + l.categoria + ' ' + l.meio + ' ' + l.destino);
+        if (!palavras.every(function (p) { return alvo.indexOf(p) >= 0; })) return;
+      }
+      var s = sinalDe(nat, l.natureza), v = valorUsado(l), vr = l.efetivo != null ? l.efetivo : 0;
+      var ym = l.data.slice(0, 7), m = meses[ym] || (meses[ym] = { ym: ym, entradas: 0, saidas: 0, qtd: 0 });
+      if (s > 0) { ent += v; entR += vr; m.entradas += v; } else { sai += v; saiR += vr; m.saidas += v; }
+      m.qtd++;
+      linhas.push(l);
+    });
+    linhas.sort(function (a, b) { return a.data < b.data ? 1 : a.data > b.data ? -1 : 0; });
+    var lista = Object.keys(meses).sort().map(function (k) {
+      var m = meses[k]; m.entradas = round2(m.entradas); m.saidas = round2(m.saidas); return m;
+    });
+    return {
+      qtd: linhas.length, truncado: linhas.length > 300, linhas: linhas.slice(0, 300),
+      entradas: round2(ent), saidas: round2(sai), entradasPagas: round2(entR), saidasPagas: round2(saiR), porMes: lista
+    };
+  }
+
   // ---------- cartão ----------
   function cicloFatura(dataIso, fech, venc) {
     var p = parseIso(dataIso), ym = p.y + '-' + pad(p.m);
@@ -355,6 +388,6 @@ var Fin = (function () {
     ancoraAte: ancoraAte, saldoEm: saldoEm, extrato: extrato, resumo: resumo,
     cicloFatura: cicloFatura, faturas: faturas, pagamentoFatura: pagamentoFatura,
     gerarRecorrencias: gerarRecorrencias, chaveDup: chaveDup, resolverMeio: resolverMeio,
-    converterMovimentacao: converterMovimentacao, alias: alias, gerarParcelas: gerarParcelas, difDias: difDias
+    converterMovimentacao: converterMovimentacao, consultar: consultar, alias: alias, gerarParcelas: gerarParcelas, difDias: difDias
   };
 })();
