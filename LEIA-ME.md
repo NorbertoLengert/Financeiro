@@ -13,3 +13,9 @@
 ## Importar o histórico
 Cole as abas antigas (com o cabeçalho) em Importar, ImportarSaldos e ImportarRecorrentes e use o menu Finanças.
 Pode repetir: o que já existe não duplica. Confira a aba DePara (CC, CV e CM sem número viram qual conta?).
+
+## Atualização para a versão 4 (grupos, orçamento, painel, a receber)
+
+1. Cole os arquivos Logic.gs, Data.gs, Setup.gs, Api.gs e Index.html no Apps Script.
+2. Salve, volte à planilha, recarregue a página e use o menu Finanças > "Atualizar para a versão 4". Pode rodar mais de uma vez.
+3. Implantar > Gerenciar implantações > lápis > Nova versão > Implantar.

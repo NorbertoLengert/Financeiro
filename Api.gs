@@ -179,12 +179,53 @@ function api_extrato(chave, ini, fim) {
 
 function api_consultar(f) {
   var cad = lerCadastros_();
-  return Fin.consultar(lerLancs_(), cad.nat, f || {});
+  f = f || {};
+  if (f.grupo) {
+    f.catSet = {};
+    cad.listaCats.forEach(function (c) { if ((c.grupo || 'Sem grupo') === f.grupo) f.catSet[c.descricao] = 1; });
+  }
+  return Fin.consultar(lerLancs_(), cad.nat, f);
 }
 
 function api_resumo(ini, fim) {
   var cad = lerCadastros_();
-  return Fin.resumo(lerLancs_(), cad.nat, ini, fim);
+  var meses = Fin.difMeses(ini.slice(0, 7), fim.slice(0, 7)) + 1;
+  var r = Fin.resumo(lerLancs_(), cad.nat, ini, fim, { grupoDe: grupoDeMapa_(cad), orcamento: lerOrcamento_(), meses: meses });
+  r.meses = meses;
+  return r;
+}
+
+// Orçamento mensal por categoria de despesa, com a média dos últimos 12 meses fechados para servir de referência.
+function api_orcamento() {
+  var cad = lerCadastros_(), hoje = hoje_(), cur = hoje.slice(0, 7);
+  var ini = Fin.addMeses(cur, -12) + '-01', fim = Fin.diaNoMes(Fin.addMeses(cur, -1), 31);
+  var r = Fin.resumo(lerLancs_(), cad.nat, ini, fim, {});
+  var media = {};
+  r.despesas.itens.forEach(function (i) { media[i.categoria] = Fin.round2(i.realizado / 12); });
+  var orc = lerOrcamento_();
+  return cad.listaCats.filter(function (c) { return cad.nat[c.natureza] && cad.nat[c.natureza].efeito === 'despesa' && (c.ativo || orc[c.descricao]); })
+    .map(function (c) { return { categoria: c.descricao, grupo: c.grupo || 'Sem grupo', orcado: orc[c.descricao] || 0, media: media[c.descricao] || 0 }; });
+}
+
+function api_salvarOrcamento(lista) {
+  return comLock_(function () {
+    var cad = lerCadastros_();
+    var linhas = [];
+    (lista || []).forEach(function (x) {
+      var v = Fin.parseNum(x.orcado);
+      if (!cad.categorias[x.categoria] || v == null || v <= 0) return;
+      linhas.push([x.categoria, v]);
+    });
+    var sh = aba_(ABA.orc), n = sh.getLastRow();
+    if (n >= 2) sh.getRange(2, 1, n - 1, 2).setValues(Array.apply(null, Array(n - 1)).map(function () { return ['', '']; }));
+    if (linhas.length) sh.getRange(2, 1, linhas.length, 2).setValues(linhas);
+    return linhas.length;
+  });
+}
+
+function api_painel() {
+  var cad = lerCadastros_();
+  return Fin.painel({ contas: cad.contas, lancs: lerLancs_(), saldos: lerSaldos_(), nat: cad.nat, hoje: hoje_() });
 }
 
 function api_saldos(data) {
@@ -257,7 +298,7 @@ function api_itensFatura(chaveGrupo, id) {
   var g = cad.contasMap[chaveGrupo];
   var membros = cad.contas.filter(function (c) { return c.chave === g.chave || c.faturaDe === g.chave; }).map(function (c) { return c.chave; });
   var itens = lerLancs_().filter(function (l) {
-    return membros.indexOf(l.meio) >= 0 && !l.destino && Fin.cicloFatura(l.data, g.diaFech || 1, g.diaVenc || 10).id === id;
+    return membros.indexOf(l.meio) >= 0 && (!l.destino || (cad.contasMap[l.destino] && cad.contasMap[l.destino].classe === 'emprestimo')) && Fin.cicloFatura(l.data, g.diaFech || 1, g.diaVenc || 10).id === id;
   }).map(function (l) {
     return { id: l.id, data: l.data, desc: l.desc, categoria: l.categoria, meio: l.meio, valor: -Fin.sinalDe(cad.nat, l.natureza) * Fin.valorUsado(l), pendente: l.efetivo == null };
   });
@@ -342,7 +383,6 @@ function api_salvarConta(c) {
       c.saldoInicial == null || c.saldoInicial === '' ? '' : Fin.parseNum(c.saldoInicial), isoData_(c.dataSaldoInicial || ''),
       c.faturaDe || '', c.diaFech || '', c.diaVenc || '', c.contaPgto || '']);
     limparCache_();
-    limparCache_();
     return chave;
   });
 }
@@ -371,7 +411,7 @@ function api_salvarCategoria(c) {
     if (!cad.nat[c.natureza]) throw new Error('Natureza inválida.');
     var atual = cad.categorias[desc];
     var ordem = atual ? atual.ordem : (cad.listaCats.reduce(function (m, x) { return Math.max(m, x.ordem); }, 0) + 1);
-    gravarLinhaPorChave_(ABA.cats, 2, desc, [ordem, desc, c.natureza, c.ativo === false ? 'N' : 'S']);
+    gravarLinhaPorChave_(ABA.cats, 2, desc, [ordem, desc, c.natureza, c.ativo === false ? 'N' : 'S', String(c.grupo || '').trim()]);
     limparCache_();
     return desc;
   });

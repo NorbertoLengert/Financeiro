@@ -4,18 +4,19 @@
  */
 var ABA = {
   lanc: 'Lancamentos', contas: 'Contas', cats: 'Categorias', nat: 'Naturezas',
-  tipos: 'Tipos', saldos: 'Saldos', recs: 'Recorrencias', depara: 'DePara'
+  tipos: 'Tipos', saldos: 'Saldos', recs: 'Recorrencias', depara: 'DePara', orc: 'Orcamento'
 };
 
 var CABECALHO = {
   Lancamentos: ['ID', 'Data', 'Descrição', 'Categoria', 'Meio Pagto', 'Natureza', 'Sinal', 'Destino', 'R$ Previsto', 'R$ Efetivo', 'Conferido', 'Recorrência', 'Ref', 'Ano', 'Mês'],
   Contas: ['Ordem', 'Nome', 'Tipo', 'Chave', 'Classe', 'Ativo', 'Saldo inicial', 'Data saldo inicial', 'Fatura de', 'Dia fechamento', 'Dia vencimento', 'Conta de pagamento'],
-  Categorias: ['Ordem', 'Descrição', 'Natureza', 'Ativo'],
+  Categorias: ['Ordem', 'Descrição', 'Natureza', 'Ativo', 'Grupo'],
   Naturezas: ['Natureza', 'Sinal', 'Efeito'],
   Tipos: ['Código', 'Classe', 'Descrição'],
   Saldos: ['Data', 'Conta', 'Saldo Lancamentos', 'Saldo Instituicao', 'Diferenca', 'Chave'],
   Recorrencias: ['ID', 'Descrição', 'Meio Pagto', 'Categoria', 'Destino', 'R$ Previsto', 'Dia', 'Início', 'Nº Meses', 'Ativo'],
-  DePara: ['Tipo', 'Valor no legado', 'Chave no app']
+  DePara: ['Tipo', 'Valor no legado', 'Chave no app'],
+  Orcamento: ['Categoria', 'Valor mensal']
 };
 
 // ---------- planilha e conversões ----------
@@ -82,7 +83,7 @@ function comLock_(fn) {
 function novoId_() { return Utilities.getUuid().replace(/-/g, '').slice(0, 10); }
 
 // ---------- cadastros ----------
-var CAD_CHAVE = 'cadastros_v3';
+var CAD_CHAVE = 'cadastros_v4';
 function limparCache_() {
   _memo.cad = null;
   try { CacheService.getScriptCache().remove(CAD_CHAVE); } catch (e) {}
@@ -130,7 +131,7 @@ function lerCadastrosPlanilha_() {
   var categorias = {}, listaCats = [];
   lerAba_(ABA.cats).forEach(function (r) {
     if (!r[1]) return;
-    var c = { ordem: Number(r[0]) || 0, descricao: String(r[1]).trim(), natureza: String(r[2]).trim(), ativo: ativo_(r[3]) };
+    var c = { ordem: Number(r[0]) || 0, descricao: String(r[1]).trim(), natureza: String(r[2]).trim(), ativo: ativo_(r[3]), grupo: String(r[4] || '').trim() };
     categorias[c.descricao] = c; listaCats.push(c);
   });
   var deParaMeio = {}, deParaFatura = [], aliasCat = {}, aliasNat = {};
@@ -141,6 +142,21 @@ function lerCadastrosPlanilha_() {
     else if (r[0] === 'natureza') aliasNat[Fin.norm(r[1])] = String(r[2]).trim();
   });
   return { nat: nat, tipos: tipos, contas: contas, contasMap: contasMap, categorias: categorias, listaCats: listaCats, deParaMeio: deParaMeio, deParaFatura: deParaFatura, aliasCat: aliasCat, aliasNat: aliasNat };
+}
+
+// ---------- orçamento ----------
+function lerOrcamento_() {
+  var o = {};
+  lerAba_(ABA.orc).forEach(function (r) {
+    var v = numOuNulo_(r[1]);
+    if (r[0] && v != null && v > 0) o[String(r[0]).trim()] = v;
+  });
+  return o;
+}
+function grupoDeMapa_(cad) {
+  var m = {};
+  cad.listaCats.forEach(function (c) { if (c.grupo) m[c.descricao] = c.grupo; });
+  return m;
 }
 
 // ---------- lançamentos ----------

@@ -23,6 +23,7 @@ function onOpen() {
     .addItem('Importar saldos (aba ImportarSaldos)', 'importarSaldos')
     .addItem('Importar recorrentes (aba ImportarRecorrentes)', 'importarRecorrentes')
     .addSeparator()
+    .addItem('Atualizar para a versão 4 (grupos, orçamento, painel)', 'migrarV4')
     .addItem('Atualizar cadastros no aplicativo', 'atualizarCadastros')
     .addItem('Mostrar endereço do aplicativo', 'mostrarEndereco')
     .addToUi();
@@ -36,27 +37,28 @@ function mostrarEndereco() {
 // ---------- dados iniciais ----------
 var SEED_NATUREZAS = [
   ['Receita', '+', 'receita'], ['Despesa', '-', 'despesa'], ['Aplicação', '-', 'neutro'], ['Resgate', '+', 'neutro'],
-  ['Depósito', '+', 'neutro'], ['Retirada', '-', 'neutro'], ['Transitória', '+', 'neutro'], ['Transferência', '-', 'neutro']
+  ['Depósito', '+', 'neutro'], ['Retirada', '-', 'neutro'], ['Transitória', '+', 'neutro'], ['Transferência', '-', 'neutro'],
+  ['Compromisso', '-', 'neutro'], ['Rendimento', '+', 'rendimento']
 ];
 var SEED_TIPOS = [
   ['CC', 'corrente', 'Conta corrente'], ['CP', 'aplicacao', 'Poupança'], ['SIC', 'corrente', 'Sicoob'], ['CRE', 'corrente', 'Cresol'],
   ['CEF', 'corrente', 'Caixa Econômica'], ['CV', 'cartao', 'Cartão Visa'], ['CM', 'cartao', 'Cartão Mastercard'],
   ['CX', 'dinheiro', 'Dinheiro'], ['AP', 'aplicacao', 'Aplicação financeira'], ['VA', 'beneficio', 'Vale alimentação'],
-  ['EU', 'moeda', 'Euro'], ['US', 'moeda', 'Dólar'], ['EM', 'emprestimo', 'Valor emprestado a receber'], ['Coopera', 'outro', 'Cooperativa']
+  ['EU', 'moeda', 'Euro'], ['US', 'moeda', 'Dólar'], ['EM', 'emprestimo', 'Valor emprestado a receber'], ['AR', 'emprestimo', 'A receber (pessoa ou empresa)'], ['Coopera', 'outro', 'Cooperativa']
 ];
 // [nome, tipo, faturaDe]
 var SEED_CONTAS = [
   ['2278-0', 'CC'], ['Norberto', 'CV'], ['Gerti', 'CV', 'CV - Norberto'], ['Anna', 'CV', 'CV - Norberto'], ['Maria', 'CV', 'CV - Norberto'], ['Caixa', 'CX'],
-  ['3891', 'CP'], ['RDC', 'AP'], ['LCA', 'AP'], ['LCI', 'AP'], ['Dilnei', 'EM'], ['Matias', 'EM'], ['Euro', 'EU'], ['Dolar', 'US'],
+  ['3891', 'CP'], ['RDC', 'AP'], ['LCA', 'AP'], ['LCI', 'AP'], ['Dilnei', 'EM'], ['Matias', 'EM'], ['Empresa', 'AR'], ['Euro', 'EU'], ['Dolar', 'US'],
   ['Norberto', 'VA'], ['29906-3', 'SIC'], ['41931-1', 'CRE'], ['575930433-6', 'CEF'], ['123912-0', 'CC'],
   ['Norberto', 'CM'], ['cashback', 'Coopera'], ['Gerti', 'CM', 'CM - Norberto']
 ];
 var SEED_CATEGORIAS = [
   ['Água Prefeitura', 'Despesa'], ['Aluguel Terra', 'Despesa'], ['Antecipação', 'Retirada'], ['Aplicações', 'Aplicação'],
-  ['Caixa', 'Transitória'], ['Pagamento de fatura', 'Retirada'], ['Combustível', 'Despesa'], ['Consórcio', 'Aplicação'], ['Dentista', 'Despesa'],
+  ['Caixa', 'Transitória'], ['Pagamento de fatura', 'Retirada'], ['Combustível', 'Despesa'], ['Consórcio', 'Compromisso'], ['Dentista', 'Despesa'],
   ['Devolução antecipação', 'Depósito'], ['Mercado, Padaria e Açougue', 'Despesa'], ['Telefone', 'Despesa'], ['Lazer', 'Despesa'],
   ['Energia Elétrica', 'Despesa'], ['Plano de Saúde', 'Despesa'], ['Salário UCEFF', 'Receita'],
-  ['Resgate de aplicações', 'Resgate'], ['Rendimento de aplicações', 'Receita'], ['Transferência entre contas', 'Transferência']
+  ['Resgate de aplicações', 'Resgate'], ['Rendimento de aplicações', 'Rendimento'], ['Transferência entre contas', 'Transferência']
 ];
 var SEED_DEPARA = [
   ['meio', 'CC', 'CC - 2278-0'], ['meio', 'CV', 'CV - Norberto'], ['meio', 'CM', 'CM - Norberto'],
@@ -82,7 +84,7 @@ function configurarPlanilha() {
 
   semear_(ABA.nat, SEED_NATUREZAS);
   semear_(ABA.tipos, SEED_TIPOS);
-  semear_(ABA.cats, SEED_CATEGORIAS.map(function (c, i) { return [i + 1, c[0], c[1], '']; }));
+  semear_(ABA.cats, SEED_CATEGORIAS.map(function (c, i) { return [i + 1, c[0], c[1], '', grupoSugerido_(c[0], c[1])]; }));
   semear_(ABA.depara, SEED_DEPARA);
   semear_(ABA.contas, SEED_CONTAS.map(function (c, i) {
     return [i + 1, c[0], c[1], c[1] + ' - ' + c[0], '', '', '', '', c[2] || '', '', '', ''];
@@ -93,6 +95,7 @@ function configurarPlanilha() {
   l.getRange('I2:J').setNumberFormat('#,##0.00');
   aba_(ABA.saldos).getRange('A2:A').setNumberFormat('dd/mm/yyyy');
   aba_(ABA.saldos).getRange('C2:E').setNumberFormat('#,##0.00');
+  aba_(ABA.orc).getRange('B2:B').setNumberFormat('#,##0.00');
   aba_(ABA.recs).getRange('H2:H').setNumberFormat('mm/yyyy');
   aba_(ABA.recs).getRange('F2:F').setNumberFormat('#,##0.00');
   aba_(ABA.contas).getRange('H2:H').setNumberFormat('dd/mm/yyyy');
@@ -169,7 +172,7 @@ function importarMovimentacao_() {
     var nomesCats = Object.keys(catsNovas);
     if (nomesCats.length) {
       var shC = aba_(ABA.cats), base = shC.getLastRow();
-      shC.getRange(base + 1, 1, nomesCats.length, 4).setValues(nomesCats.map(function (n, j) { return [base + j, n, catsNovas[n], '']; }));
+      shC.getRange(base + 1, 1, nomesCats.length, 5).setValues(nomesCats.map(function (n, j) { return [base + j, n, catsNovas[n], '', grupoSugerido_(n, catsNovas[n])]; }));
     }
     if (novas.length) {
       var sh = aba_(ABA.lanc);
@@ -253,7 +256,7 @@ function importarRecorrentes_() {
     var nomes = Object.keys(catsNovas);
     if (nomes.length) {
       var shC = aba_(ABA.cats), base = shC.getLastRow();
-      shC.getRange(base + 1, 1, nomes.length, 4).setValues(nomes.map(function (n, j) { return [base + j, n, catsNovas[n], '']; }));
+      shC.getRange(base + 1, 1, nomes.length, 5).setValues(nomes.map(function (n, j) { return [base + j, n, catsNovas[n], '', grupoSugerido_(n, catsNovas[n])]; }));
     }
     if (novas.length) {
       var sh = aba_(ABA.recs);
@@ -263,5 +266,90 @@ function importarRecorrentes_() {
     var linhas = ['Importadas: ' + novas.length, 'Já existiam: ' + dups, 'O mês de início foi lido como mês de ' + ano + '.'];
     Object.keys(rej).forEach(function (m) { linhas.push('Rejeitadas (' + m + '): ' + rej[m]); });
     return { importadas: novas.length, duplicadas: dups, rejeitadas: rej, linhas: linhas };
+  });
+}
+
+// ---------- grupos de categorias ----------
+var GRUPOS_PALAVRAS = [
+  ['Moradia', ['agua', 'energia', 'luz', 'aluguel', 'condominio', 'iptu', 'internet', 'telefone', 'celular', 'gas', 'reforma', 'casa', 'manutencao']],
+  ['Alimentação', ['mercado', 'padaria', 'acougue', 'restaurante', 'lanche', 'feira', 'ifood', 'supermercado']],
+  ['Transporte', ['combustivel', 'gasolina', 'ipva', 'seguro auto', 'pedagio', 'estacionamento', 'uber', 'oficina', 'veiculo', 'carro']],
+  ['Saúde', ['saude', 'plano de', 'dentista', 'farmacia', 'medico', 'unimed', 'consulta', 'exame']],
+  ['Lazer', ['lazer', 'viagem', 'cinema', 'streaming', 'assinatura', 'passeio']],
+  ['Educação', ['escola', 'curso', 'faculdade', 'livro', 'mensalidade']]
+];
+function grupoSugerido_(nome, natureza) {
+  if (natureza === 'Receita') return 'Receitas';
+  if (natureza === 'Rendimento') return 'Rendimentos';
+  if (natureza !== 'Despesa') return '';
+  var n = Fin.norm(nome);
+  for (var i = 0; i < GRUPOS_PALAVRAS.length; i++) {
+    for (var j = 0; j < GRUPOS_PALAVRAS[i][1].length; j++) if (n.indexOf(GRUPOS_PALAVRAS[i][1][j]) >= 0) return GRUPOS_PALAVRAS[i][0];
+  }
+  return 'Outros';
+}
+
+// ---------- migração para a versão 4 (pode rodar mais de uma vez) ----------
+function migrarV4() { mostrarRelatorio_('versão 4', migrarV4_()); }
+function migrarV4_() {
+  return comLock_(function () {
+    var ss = ss_(), linhas = [];
+    // 1. abas e cabeçalhos
+    ['Orcamento', 'Categorias'].forEach(function (nome) {
+      var sh = ss.getSheetByName(nome) || ss.insertSheet(nome);
+      var cab = CABECALHO[nome];
+      sh.getRange(1, 1, 1, cab.length).setValues([cab]).setFontWeight('bold').setBackground('#e6f2ef');
+      sh.setFrozenRows(1);
+      _memo.abas[nome] = sh;
+    });
+    // 2. naturezas
+    var nats = lerAba_(ABA.nat).map(function (r) { return String(r[0]); });
+    var novasNat = SEED_NATUREZAS.filter(function (n) { return nats.indexOf(n[0]) < 0; });
+    if (novasNat.length) {
+      var shN = aba_(ABA.nat);
+      shN.getRange(shN.getLastRow() + 1, 1, novasNat.length, 3).setValues(novasNat);
+      linhas.push('Naturezas criadas: ' + novasNat.map(function (n) { return n[0]; }).join(', '));
+    }
+    // 3. tipo AR e conta Empresa
+    var tipos = lerAba_(ABA.tipos).map(function (r) { return String(r[0]); });
+    if (tipos.indexOf('AR') < 0) {
+      var shT = aba_(ABA.tipos);
+      shT.getRange(shT.getLastRow() + 1, 1, 1, 3).setValues([['AR', 'emprestimo', 'A receber (pessoa ou empresa)']]);
+      linhas.push('Tipo AR (a receber) criado.');
+    }
+    var contas = lerAba_(ABA.contas);
+    if (!contas.some(function (r) { return String(r[3]) === 'AR - Empresa'; })) {
+      var maxOrdem = contas.reduce(function (m, r) { return Math.max(m, Number(r[0]) || 0); }, 0);
+      var shC = aba_(ABA.contas);
+      shC.getRange(shC.getLastRow() + 1, 1, 1, 12).setValues([[maxOrdem + 1, 'Empresa', 'AR', 'AR - Empresa', 'emprestimo', 'S', '', '', '', '', '', '']]);
+      linhas.push('Conta "AR - Empresa" criada (adiantamentos que a empresa vai restituir).');
+    }
+    // 4. categorias: natureza e grupo
+    var shCat = aba_(ABA.cats), nCat = shCat.getLastRow(), mudouCat = [], semGrupo = 0;
+    if (nCat >= 2) {
+      var vals = shCat.getRange(2, 1, nCat - 1, 5).getValues();
+      vals.forEach(function (r, i) {
+        var nome = String(r[1]).trim(), nat = String(r[2]).trim();
+        if (nome === 'Consórcio' && nat === 'Aplicação') { r[2] = 'Compromisso'; mudouCat.push(nome); }
+        if (nome === CAT_RENDIMENTO && nat === 'Receita') { r[2] = 'Rendimento'; mudouCat.push(nome); }
+        if (nome && !String(r[4] || '').trim()) { r[4] = grupoSugerido_(nome, String(r[2]).trim()); if (r[4]) semGrupo++; }
+      });
+      shCat.getRange(2, 1, vals.length, 5).setValues(vals);
+    }
+    if (mudouCat.length) linhas.push('Categorias reclassificadas: ' + mudouCat.join(', '));
+    if (semGrupo) linhas.push('Grupos sugeridos para ' + semGrupo + ' categoria(s). Confira na aba Categorias, coluna Grupo.');
+    // 5. lançamentos já gravados com a natureza antiga
+    var shL = aba_(ABA.lanc), nL = shL.getLastRow(), trocados = 0;
+    if (nL >= 2) {
+      var cats = shL.getRange(2, 4, nL - 1, 1).getValues(), nt = shL.getRange(2, 6, nL - 1, 1).getValues();
+      for (var i = 0; i < nt.length; i++) {
+        if (cats[i][0] === 'Consórcio' && nt[i][0] === 'Aplicação') { nt[i][0] = 'Compromisso'; trocados++; }
+        else if (cats[i][0] === CAT_RENDIMENTO && nt[i][0] === 'Receita') { nt[i][0] = 'Rendimento'; trocados++; }
+      }
+      if (trocados) shL.getRange(2, 6, nL - 1, 1).setValues(nt);
+    }
+    linhas.push('Lançamentos ajustados: ' + trocados);
+    limparCache_();
+    return { trocados: trocados, linhas: linhas };
   });
 }

@@ -160,28 +160,152 @@ var Fin = (function () {
     };
   }
 
-  function resumo(lancs, nat, ini, fim) {
-    var grupos = { receita: {}, despesa: {} };
+  // extra (opcional): { grupoDe: {categoria: grupo}, orcamento: {categoria: valorMensal}, meses: n }
+  var NAT_FORA = ['Aplicação', 'Resgate', 'Compromisso'];
+  function resumo(lancs, nat, ini, fim, extra) {
+    extra = extra || {};
+    var grupoDe = extra.grupoDe || {}, orc = extra.orcamento || {}, meses = extra.meses || 1;
+    var grupos = { receita: {}, despesa: {}, rendimento: {} }, fora = {};
+    function item(g, cat) {
+      return g[cat] || (g[cat] = { categoria: cat, grupo: grupoDe[cat] || 'Sem grupo', previsto: 0, realizado: 0, projetado: 0 });
+    }
     lancs.forEach(function (l) {
       if (l.data < ini || l.data > fim) return;
       var n = nat[l.natureza];
-      if (!n || !grupos[n.efeito]) return;
-      var g = grupos[n.efeito];
-      var c = g[l.categoria] || (g[l.categoria] = { categoria: l.categoria, previsto: 0, realizado: 0, projetado: 0 });
-      c.previsto += l.previsto || 0;
-      c.realizado += l.efetivo || 0;
-      c.projetado += valorUsado(l);
+      if (!n) return;
+      if (grupos[n.efeito]) {
+        var c = item(grupos[n.efeito], l.categoria);
+        c.previsto += l.previsto || 0;
+        c.realizado += l.efetivo || 0;
+        c.projetado += valorUsado(l);
+      } else if (NAT_FORA.indexOf(l.natureza) >= 0) {
+        var f = fora[l.natureza] || (fora[l.natureza] = { natureza: l.natureza, previsto: 0, realizado: 0, projetado: 0 });
+        f.previsto += l.previsto || 0; f.realizado += l.efetivo || 0; f.projetado += valorUsado(l);
+      }
     });
-    function fecha(g) {
+    Object.keys(orc).forEach(function (cat) { if (orc[cat] > 0) item(grupos.despesa, cat); });
+    function fecha(g, comOrc) {
       var itens = Object.keys(g).map(function (k) {
-        var c = g[k]; c.previsto = round2(c.previsto); c.realizado = round2(c.realizado); c.projetado = round2(c.projetado); return c;
+        var c = g[k]; c.previsto = round2(c.previsto); c.realizado = round2(c.realizado); c.projetado = round2(c.projetado);
+        if (comOrc && orc[c.categoria] > 0) c.orcado = round2(orc[c.categoria] * meses);
+        return c;
       }).sort(function (a, b) { return b.projetado - a.projetado; });
-      var t = { previsto: 0, realizado: 0, projetado: 0 };
-      itens.forEach(function (c) { t.previsto += c.previsto; t.realizado += c.realizado; t.projetado += c.projetado; });
-      return { itens: itens, previsto: round2(t.previsto), realizado: round2(t.realizado), projetado: round2(t.projetado) };
+      var t = { previsto: 0, realizado: 0, projetado: 0, orcado: 0 };
+      itens.forEach(function (c) { t.previsto += c.previsto; t.realizado += c.realizado; t.projetado += c.projetado; t.orcado += c.orcado || 0; });
+      var out = { itens: itens, previsto: round2(t.previsto), realizado: round2(t.realizado), projetado: round2(t.projetado) };
+      if (comOrc) out.orcado = round2(t.orcado);
+      return out;
     }
-    var r = fecha(grupos.receita), d = fecha(grupos.despesa);
-    return { receitas: r, despesas: d, resultadoRealizado: round2(r.realizado - d.realizado), resultadoProjetado: round2(r.projetado - d.projetado) };
+    var r = fecha(grupos.receita), d = fecha(grupos.despesa, true), rd = fecha(grupos.rendimento);
+    var foraLista = NAT_FORA.filter(function (k) { return fora[k]; }).map(function (k) {
+      var f = fora[k]; return { natureza: k, previsto: round2(f.previsto), realizado: round2(f.realizado), projetado: round2(f.projetado) };
+    });
+    return {
+      receitas: r, despesas: d, rendimentos: rd, fora: foraLista,
+      resultadoRealizado: round2(r.realizado - d.realizado), resultadoProjetado: round2(r.projetado - d.projetado),
+      resultadoTotalRealizado: round2(r.realizado + rd.realizado - d.realizado), resultadoTotalProjetado: round2(r.projetado + rd.projetado - d.projetado)
+    };
+  }
+
+  // ---------- painel ----------
+  var CLASSES_PATRIMONIO = ['corrente', 'dinheiro', 'beneficio', 'aplicacao', 'emprestimo', 'outro', 'cartao'];
+  var CLASSES_RESERVA = ['corrente', 'dinheiro', 'aplicacao', 'cartao'];
+
+  function somaSaldos(contas, classes, lancs, saldos, nat, data, modo) {
+    var t = 0;
+    contas.forEach(function (c) { if (classes.indexOf(c.classe) >= 0) t += saldoEm(c, lancs, saldos, nat, data, modo); });
+    return round2(t);
+  }
+
+  // p: { contas, lancs, saldos, nat, hoje }
+  function painel(p) {
+    var contas = p.contas, lancs = p.lancs, saldos = p.saldos, nat = p.nat, hoje = p.hoje;
+    var cur = hoje.slice(0, 7), classeDe = {};
+    contas.forEach(function (c) { classeDe[c.chave] = c.classe; });
+
+    // receitas, despesas e rendimentos mês a mês (só o que foi pago)
+    var mapa = {}, cats = {}, compromisso = 0;
+    var meses = []; for (var k = 11; k >= 0; k--) meses.push(addMeses(cur, -k));
+    meses.forEach(function (ym) { mapa[ym] = { ym: ym, receitas: 0, despesas: 0, rendimentos: 0 }; });
+    lancs.forEach(function (l) {
+      var n = nat[l.natureza];
+      if (!n) return;
+      if (l.natureza === 'Compromisso' && l.efetivo != null && l.data <= hoje) compromisso += l.efetivo;
+      if (l.efetivo == null) return;
+      var m = mapa[l.data.slice(0, 7)];
+      if (!m) return;
+      if (n.efeito === 'receita') m.receitas += l.efetivo;
+      else if (n.efeito === 'rendimento') m.rendimentos += l.efetivo;
+      else if (n.efeito === 'despesa') {
+        m.despesas += l.efetivo;
+        var c = cats[l.categoria] || (cats[l.categoria] = { categoria: l.categoria, mes: 0, soma12: 0 });
+        if (l.data.slice(0, 7) === cur) c.mes += l.efetivo; else c.soma12 += l.efetivo;
+      }
+    });
+    var serie = meses.map(function (ym) {
+      var m = mapa[ym]; return { ym: ym, receitas: round2(m.receitas), despesas: round2(m.despesas), rendimentos: round2(m.rendimentos) };
+    });
+    var fechados = serie.filter(function (m) { return m.ym < cur; });
+    var ult3 = fechados.slice(-3);
+    var rec3 = 0, desp3 = 0;
+    ult3.forEach(function (m) { rec3 += m.receitas; desp3 += m.despesas; });
+    var taxa3m = ult3.length === 3 && rec3 > 0 ? round2((rec3 - desp3) / rec3 * 100) : null;
+    var comDespesa = fechados.filter(function (m) { return m.despesas > 0; }).slice(-6);
+    var despMedia = comDespesa.length >= 3 ? round2(comDespesa.reduce(function (t, m) { return t + m.despesas; }, 0) / comDespesa.length) : null;
+    var liquido = somaSaldos(contas, CLASSES_RESERVA, lancs, saldos, nat, hoje, 'real');
+    var reservaMeses = despMedia ? round2(liquido / despMedia) : null;
+
+    // patrimônio líquido ao fim de cada mês (moeda estrangeira fica de fora: está em outra unidade)
+    var primeira = null;
+    saldos.forEach(function (s) { if (s.inst != null && (!primeira || s.data < primeira)) primeira = s.data; });
+    var ini = addMeses(cur, -11);
+    if (primeira && primeira.slice(0, 7) > ini) ini = primeira.slice(0, 7);
+    var patrimonio = [];
+    for (var ym = ini; ym <= cur; ym = addMeses(ym, 1)) {
+      var fimMes = ym === cur ? hoje : diaNoMes(ym, 31);
+      patrimonio.push({ ym: ym, valor: somaSaldos(contas, CLASSES_PATRIMONIO, lancs, saldos, nat, fimMes, 'real') });
+    }
+
+    var topDespesas = Object.keys(cats).map(function (k2) {
+      var c = cats[k2], mesesBase = Math.max(1, Math.min(11, fechados.length));
+      return { categoria: c.categoria, mes: round2(c.mes), media: round2(c.soma12 / mesesBase) };
+    }).sort(function (a, b) { return Math.max(b.mes, b.media) - Math.max(a.mes, a.media); }).slice(0, 5);
+
+    // próximos 30 dias
+    var limite = addDias(hoje, 30), itens = [], atrasados = 0, aPagarFaturas = 0;
+    lancs.forEach(function (l) {
+      if (l.efetivo != null || !(l.previsto || 0)) return;
+      if (l.data < hoje) { atrasados++; return; }
+      if (l.data > limite) return;
+      if (classeDe[l.meio] === 'cartao' || classeDe[l.destino] === 'cartao') return; // entra pela fatura
+      itens.push({ id: l.id, data: l.data, desc: l.desc, categoria: l.categoria, meio: l.meio, valor: round2(sinalDe(nat, l.natureza) * l.previsto), fatura: false });
+    });
+    contas.forEach(function (g) {
+      if (g.classe !== 'cartao' || g.faturaDe || !g.ativo) return;
+      faturas(g, contas, lancs, nat, hoje).forEach(function (f) {
+        if (f.status === 'paga' || f.vencimento < hoje || f.vencimento > limite || !(f.restante > 0)) return;
+        itens.push({ id: 'fat|' + g.chave + '|' + f.id, data: f.vencimento, desc: 'Fatura ' + g.chave, categoria: 'Fatura do cartão', meio: g.contaPgto || '', valor: -f.restante, fatura: true });
+        aPagarFaturas += Math.max(0, f.restante - f.agendado);
+      });
+    });
+    itens.sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0; });
+    var ent = 0, sai = 0;
+    itens.forEach(function (i) { if (i.valor >= 0) ent += i.valor; else sai += i.valor; });
+    var disp = somaSaldos(contas, ['corrente', 'dinheiro'], lancs, saldos, nat, hoje, 'real');
+    var dispProj = round2(somaSaldos(contas, ['corrente', 'dinheiro'], lancs, saldos, nat, limite, 'proj') - aPagarFaturas);
+
+    return {
+      hoje: hoje, serie: serie,
+      kpis: {
+        resultadoMes: round2(mapa[cur].receitas - mapa[cur].despesas), receitasMes: round2(mapa[cur].receitas), despesasMes: round2(mapa[cur].despesas),
+        rendimentosMes: round2(mapa[cur].rendimentos), taxaPoupanca3m: taxa3m, despesaMedia: despMedia, liquido: liquido, reservaMeses: reservaMeses,
+        mesesComDados: comDespesa.length, patrimonio: patrimonio.length ? patrimonio[patrimonio.length - 1].valor : 0,
+        variacaoPatrimonio: patrimonio.length > 1 ? round2(patrimonio[patrimonio.length - 1].valor - patrimonio[patrimonio.length - 2].valor) : null,
+        compromissoPago: round2(compromisso)
+      },
+      patrimonio: patrimonio, topDespesas: topDespesas,
+      proximos: { ini: hoje, fim: limite, itens: itens, entradas: round2(ent), saidas: round2(sai), atrasados: atrasados, disponivel: disp, disponivelProjetado: dispProj }
+    };
   }
 
   // ---------- consulta por categoria e período ----------
@@ -193,6 +317,7 @@ var Fin = (function () {
       if (f.ini && l.data < f.ini) return;
       if (f.fim && l.data > f.fim) return;
       if (f.categoria && l.categoria !== f.categoria) return;
+      if (f.catSet && !f.catSet[l.categoria]) return;
       if (f.natureza && l.natureza !== f.natureza) return;
       if (f.conta && l.meio !== f.conta && l.destino !== f.conta) return;
       if (f.status === 'pagos' && l.efetivo == null) return;
@@ -237,12 +362,14 @@ var Fin = (function () {
     var membros = contas.filter(function (c) { return c.chave === grupo.chave || c.faturaDe === grupo.chave; })
       .map(function (c) { return c.chave; });
     var fech = grupo.diaFech || 1, venc = grupo.diaVenc || 10;
+    var aReceber = {};
+    contas.forEach(function (c) { if (c.classe === 'emprestimo') aReceber[c.chave] = 1; });
     var mapa = {};
     function nova(id, venc_) {
       return { id: id, fechamento: diaNoMes(id, fech), vencimento: venc_, total: 0, itens: 0, porCartao: {}, pagamentos: [], pagamento: null };
     }
     lancs.forEach(function (l) {
-      if (membros.indexOf(l.meio) < 0 || l.destino) return;
+      if (membros.indexOf(l.meio) < 0 || (l.destino && !aReceber[l.destino])) return;
       var cic = cicloFatura(l.data, fech, venc);
       var f = mapa[cic.id] || (mapa[cic.id] = nova(cic.id, cic.vencimento));
       var v = -sinalDe(nat, l.natureza) * valorUsado(l);
@@ -385,7 +512,7 @@ var Fin = (function () {
     diaNoMes: diaNoMes, ultimoDia: ultimoDia, diasNoMes: diasNoMes, round2: round2, norm: norm,
     parseNum: parseNum, parseMesCol: parseMesCol, parseDataLegado: parseDataLegado, corrigirData: corrigirData,
     sinalDe: sinalDe, valorUsado: valorUsado, efeitoConta: efeitoConta, instParaInterno: instParaInterno,
-    ancoraAte: ancoraAte, saldoEm: saldoEm, extrato: extrato, resumo: resumo,
+    ancoraAte: ancoraAte, saldoEm: saldoEm, extrato: extrato, resumo: resumo, painel: painel,
     cicloFatura: cicloFatura, faturas: faturas, pagamentoFatura: pagamentoFatura,
     gerarRecorrencias: gerarRecorrencias, chaveDup: chaveDup, resolverMeio: resolverMeio,
     converterMovimentacao: converterMovimentacao, consultar: consultar, alias: alias, gerarParcelas: gerarParcelas, difDias: difDias

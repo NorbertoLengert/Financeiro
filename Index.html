@@ -9,11 +9,11 @@
 <style>
 :root{
   --bg:#f4f6f5; --card:#ffffff; --tx:#16201e; --mut:#5f6f6b; --bd:#dde4e2; --pri:#0f766e; --pri-tx:#fff;
-  --pos:#0b7a43; --neg:#b42318; --warn:#9a6700; --warn-bg:#fff4d6; --chip:#e8eeec; --bar:#bfe0da;
+  --c1:#2a78d6; --c2:#eb6834; --pos:#0b7a43; --neg:#b42318; --warn:#9a6700; --warn-bg:#fff4d6; --chip:#e8eeec; --bar:#bfe0da;
 }
 @media (prefers-color-scheme:dark){
   :root{--bg:#0e1514; --card:#162120; --tx:#e7efed; --mut:#93a6a1; --bd:#27393a; --pri:#2dd4bf; --pri-tx:#06211e;
-    --pos:#4ade80; --neg:#f87171; --warn:#fbbf24; --warn-bg:#3a2e0a; --chip:#1f2f2e; --bar:#1f4a45;}
+    --c1:#3987e5; --c2:#d95926; --pos:#4ade80; --neg:#f87171; --warn:#fbbf24; --warn-bg:#3a2e0a; --chip:#1f2f2e; --bar:#1f4a45;}
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -25,7 +25,7 @@ header h1{font-size:17px;margin:0;flex:1}
 @keyframes g{to{transform:rotate(360deg)}}
 main{max-width:860px;margin:0 auto;padding:12px 16px}
 nav{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--card);border-top:1px solid var(--bd);display:flex;padding-bottom:env(safe-area-inset-bottom)}
-nav button{flex:1;border:0;background:none;color:var(--mut);padding:10px 2px 8px;font:inherit;font-size:12px;cursor:pointer}
+nav button{flex:1;min-width:0;border:0;background:none;color:var(--mut);padding:10px 0 8px;font:inherit;font-size:11px;cursor:pointer}
 nav button b{display:block;font-size:18px;line-height:1.1;font-weight:400}
 nav button.on{color:var(--pri);font-weight:600}
 @media (min-width:900px){
@@ -83,6 +83,20 @@ button.mini{font:inherit;font-size:13px;padding:6px 10px;min-height:0;border-rad
 @media (min-width:700px){#modal{align-items:center}#modal .box{border-radius:16px}}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));background:#16201e;color:#fff;padding:10px 16px;border-radius:99px;z-index:30;display:none;max-width:90vw;font-size:14px}
 #toast.err{background:var(--neg)}
+.barra i.est{background:var(--neg)}
+.chart{width:100%;height:auto;display:block;touch-action:manipulation}
+.chart text{fill:var(--mut);font-size:10px}
+.chart .grade{stroke:var(--bd);stroke-width:1}
+.chart .sel{fill:var(--chip)}
+.chart rect.b1{fill:var(--c1)}.chart rect.b2{fill:var(--c2)}
+.chart .lin{fill:none;stroke:var(--c1);stroke-width:2}
+.chart circle{fill:var(--c1)}
+.leg{display:flex;gap:14px;font-size:13px;color:var(--mut);margin:6px 0}
+.leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.det{font-size:14px;min-height:20px;margin-top:4px;font-variant-numeric:tabular-nums}
+table.tb{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+table.tb th,table.tb td{padding:5px 4px;text-align:right;border-bottom:1px solid var(--bd)}
+table.tb th:first-child,table.tb td:first-child{text-align:left}
 .acoes{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}.acoes>*{flex:1}
 .sub{color:var(--mut);font-size:13px}
 </style>
@@ -91,6 +105,7 @@ button.mini{font:inherit;font-size:13px;padding:6px 10px;min-height:0;border-rad
 <header><h1 id="titulo">Finanças</h1><div id="busy"></div></header>
 <main id="view"><div class="vazio">Carregando…</div></main>
 <nav id="nav">
+  <button data-tab="painel"><b>▦</b>Painel</button>
   <button data-tab="lancar"><b>＋</b>Lançar</button>
   <button data-tab="extrato"><b>≡</b>Extrato</button>
   <button data-tab="resumo"><b>◔</b>Resumo</button>
@@ -104,7 +119,7 @@ button.mini{font:inherit;font-size:13px;padding:6px 10px;min-height:0;border-rad
 <script>
 const S = { cad: null, hoje: '', recentes: [], recs: [], tab: 'lancar', planilha: '',
   ext: { chave: null, mes: null, soNaoConf: false, dados: null, modo: 'conta' },
-  res: { modo: 'mes', ref: null }, mais: 'rec', cache: {}, cons: {} };
+  res: { modo: 'mes', ref: null, vis: 'cat' }, mais: 'rec', cache: {}, cons: {}, pn: { tabela: false } };
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const brl = v => v == null ? '' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -163,11 +178,13 @@ function optContas(sel, vazio, filtro) {
   return (vazio ? '<option value="">—</option>' : '') + S.cad.contas.filter(c => (c.ativo || c.chave === sel) && (!filtro || filtro(c)))
     .map(c => `<option value="${esc(c.chave)}" ${c.chave === sel ? 'selected' : ''}>${esc(c.chave)}</option>`).join('');
 }
-const ROTULO_DESTINO = { 'Transferência': 'Para a conta', 'Aplicação': 'Aplicado em', 'Resgate': 'Resgatado de', 'Retirada': 'Foi para (ex.: cartão)', 'Depósito': 'Veio de', 'Transitoria': 'Outra conta' };
+const ROTULO_DESTINO = { 'Transferência': 'Para a conta', 'Aplicação': 'Aplicado em', 'Resgate': 'Resgatado de', 'Retirada': 'Foi para (ex.: cartão)', 'Depósito': 'Veio de', 'Transitoria': 'Outra conta', 'Compromisso': 'Outra conta' };
 function precisaDestino(catNome) {
   const n = natDe(catNome); if (!n) return false;
-  return n.efeito !== 'receita' && n.efeito !== 'despesa';
+  return n.efeito === 'neutro';
 }
+const arPadrao = () => { const x = S.cad.contas.filter(c => c.ativo && c.tipo === 'AR'); return x.length === 1 ? x[0].chave : ''; };
+const ehAntecip = cat => cat === 'Antecipação' || cat === 'Devolução antecipação';
 function sinalLanc(l) { const n = S.cad.naturezas.find(x => x.nome === l.natureza); return n ? n.sinal : -1; }
 function valorLanc(l) { return l.efetivo != null ? l.efetivo : (l.previsto || 0); }
 
@@ -176,9 +193,98 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => ir(b.data
 function ir(tab) {
   S.tab = tab;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  const t = { lancar: 'Lançar', extrato: 'Extrato e conciliação', resumo: 'Resumo', saldos: 'Saldos', faturas: 'Cartões', mais: 'Mais' }[tab];
+  const t = { painel: 'Painel', lancar: 'Lançar', extrato: 'Extrato e conciliação', resumo: 'Resumo', saldos: 'Saldos', faturas: 'Cartões', mais: 'Mais' }[tab];
   $('#titulo').textContent = t;
-  ({ lancar: vLancar, extrato: vExtrato, resumo: vResumo, saldos: vSaldos, faturas: vFaturas, mais: vMais })[tab]();
+  ({ painel: vPainel, lancar: vLancar, extrato: vExtrato, resumo: vResumo, saldos: vSaldos, faturas: vFaturas, mais: vMais })[tab]();
+}
+
+// =====================================================
+// PAINEL
+// =====================================================
+const M3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const mes3 = ym => M3[+ym.slice(5, 7) - 1] + '/' + ym.slice(2, 4);
+const curto = v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : String(Math.round(v));
+
+// Barras agrupadas (uma ou duas séries) em SVG. Toque numa coluna para ver os valores do mês.
+function svgBarras(serie, chaves) {
+  const W = 360, H = 190, ml = 38, mb = 22, mt = 8, mr = 6, n = serie.length;
+  const max = Math.max(1, ...serie.flatMap(m => chaves.map(k => m[k.k])));
+  const topo = Math.ceil(max / 1000) * 1000 || 1000, pw = W - ml - mr, ph = H - mt - mb, slot = pw / n, bw = Math.min(11, slot * 0.34);
+  const y = v => mt + ph - v / topo * ph;
+  let g = '';
+  [0, 0.5, 1].forEach(f => { const v = topo * f; g += `<line class="grade" x1="${ml}" x2="${W - mr}" y1="${y(v)}" y2="${y(v)}"/><text x="${ml - 4}" y="${y(v) + 3}" text-anchor="end">${curto(v)}</text>`; });
+  serie.forEach((m, i) => {
+    const cx = ml + slot * i + slot / 2;
+    g += `<g data-i="${i}" style="cursor:pointer"><rect class="sel" x="${ml + slot * i}" y="${mt}" width="${slot}" height="${ph}" opacity="0" data-fundo="${i}"/>`;
+    chaves.forEach((k, j) => {
+      const x = cx - (chaves.length * bw) / 2 + j * bw, h = Math.max(0, m[k.k] / topo * ph);
+      g += `<rect class="b${j + 1}" x="${x}" y="${mt + ph - h}" width="${bw - 1}" height="${h}" rx="1.5"/>`;
+    });
+    g += `<text x="${cx}" y="${H - 7}" text-anchor="middle">${M3[+m.ym.slice(5, 7) - 1]}</text></g>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
+}
+function svgLinha(serie) {
+  const W = 360, H = 190, ml = 38, mb = 22, mt = 10, mr = 10, n = serie.length;
+  const vals = serie.map(p => p.valor), lo = Math.min(0, ...vals), hi = Math.max(1, ...vals);
+  const pad = (hi - lo) * 0.08, mn = lo - (lo < 0 ? pad : 0), mx = hi + pad, pw = W - ml - mr, ph = H - mt - mb;
+  const x = i => ml + (n === 1 ? pw / 2 : pw * i / (n - 1)), y = v => mt + ph - (v - mn) / (mx - mn) * ph;
+  let g = '';
+  [mn, (mn + mx) / 2, mx].forEach(v => { g += `<line class="grade" x1="${ml}" x2="${W - mr}" y1="${y(v)}" y2="${y(v)}"/><text x="${ml - 4}" y="${y(v) + 3}" text-anchor="end">${curto(v)}</text>`; });
+  if (n > 1) g += `<polyline class="lin" points="${serie.map((p, i) => x(i) + ',' + y(p.valor)).join(' ')}"/>`;
+  serie.forEach((p, i) => {
+    g += `<g data-i="${i}" style="cursor:pointer"><rect x="${x(i) - pw / n / 2}" y="${mt}" width="${pw / n}" height="${ph}" fill="transparent"/><circle cx="${x(i)}" cy="${y(p.valor)}" r="3.5"/>${i % Math.ceil(n / 6) === 0 || i === n - 1 ? `<text x="${x(i)}" y="${H - 7}" text-anchor="middle">${M3[+p.ym.slice(5, 7) - 1]}</text>` : ''}</g>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
+}
+function tabelaSerie(serie, cols) {
+  return `<table class="tb"><tr><th>Mês</th>${cols.map(c => `<th>${c.t}</th>`).join('')}</tr>${serie.map(m => `<tr><td>${mes3(m.ym)}</td>${cols.map(c => `<td>${num2(m[c.k])}</td>`).join('')}</tr>`).join('')}</table>`;
+}
+
+function vPainel() {
+  $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
+  swrp('painel', () => api('api_painel')).then(d => {
+    if (S.tab !== 'painel') return;
+    const k = d.kpis, P = S.pn, tab = P.tabela;
+    const taxa = k.taxaPoupanca3m;
+    const eco = taxa == null ? 'neu' : taxa >= 20 ? 'pos' : taxa >= 0 ? 'neu' : 'neg';
+    const patrim = d.patrimonio, pr = d.proximos;
+    const topMax = Math.max(1, ...d.topDespesas.map(t => Math.max(t.mes, t.media)));
+    $('#view').innerHTML = `
+    <div class="stats">
+      <div class="stat"><small>Resultado de ${MESES[+d.hoje.slice(5, 7) - 1]}</small><b class="${k.resultadoMes >= 0 ? 'pos' : 'neg'}">${brl(k.resultadoMes)}</b><small>receitas ${num2(k.receitasMes)} · despesas ${num2(k.despesasMes)}</small></div>
+      <div class="stat"><small>Taxa de poupança (3 meses fechados)</small><b class="${eco}">${taxa == null ? '—' : num2(taxa) + '%'}</b><small>${taxa == null ? 'precisa de 3 meses fechados com receita' : 'quanto da receita sobrou'}</small></div>
+      <div class="stat"><small>Reserva de emergência</small><b>${k.reservaMeses == null ? '—' : num2(k.reservaMeses) + ' meses'}</b><small>${k.reservaMeses == null ? 'precisa de 3 meses de despesas lançadas' : 'líquido ' + num2(k.liquido) + ' ÷ média ' + num2(k.despesaMedia)}</small></div>
+      <div class="stat"><small>Patrimônio líquido</small><b>${brl(k.patrimonio)}</b>${k.variacaoPatrimonio == null ? '' : `<small class="${k.variacaoPatrimonio >= 0 ? 'pos' : 'neg'}">${k.variacaoPatrimonio >= 0 ? '+' : ''}${num2(k.variacaoPatrimonio)} no mês</small>`}</div>
+    </div>
+    <div class="card"><h2>Receitas e despesas, mês a mês</h2>
+      <div class="leg"><span><i style="background:var(--c1)"></i>Receitas</span><span><i style="background:var(--c2)"></i>Despesas</span></div>
+      ${tab ? tabelaSerie(d.serie, [{ k: 'receitas', t: 'Receitas' }, { k: 'despesas', t: 'Despesas' }]) : `<div id="p_g1">${svgBarras(d.serie, [{ k: 'receitas' }, { k: 'despesas' }])}</div><div class="det" id="p_d1">Toque numa coluna para ver os valores.</div>`}
+      <p class="sub">Só o que já foi pago. O mês atual ainda está em andamento.</p></div>
+    <div class="card"><h2>Patrimônio líquido</h2>
+      ${patrim.length < 2 ? '<div class="vazio">Aparece quando houver pelo menos dois meses com saldo registrado.</div>' : (tab ? tabelaSerie(patrim.map(p => ({ ym: p.ym, valor: p.valor })), [{ k: 'valor', t: 'Patrimônio' }]) : `<div id="p_g2">${svgLinha(patrim)}</div><div class="det" id="p_d2">Toque num ponto para ver o valor.</div>`)}
+      <p class="sub">Contas, dinheiro, aplicações e valores a receber, menos cartões a pagar. Moeda estrangeira fica de fora. Consórcio pago (${brl(k.compromissoPago)} até hoje) não entra.</p></div>
+    <div class="card"><h2>Maiores despesas: este mês e média dos meses anteriores</h2>
+      <div class="leg"><span><i style="background:var(--c1)"></i>Este mês</span><span><i style="background:var(--c2)"></i>Média mensal</span></div>
+      ${d.topDespesas.length ? d.topDespesas.map(t => `<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(t.categoria)}</span><span style="font-variant-numeric:tabular-nums">${num2(t.mes)} · ${num2(t.media)}</span></div>
+        <div class="barra" style="background:none"><i style="width:${t.mes / topMax * 100}%;background:var(--c1)"></i></div><div class="barra" style="background:none;margin-top:2px"><i style="width:${t.media / topMax * 100}%;background:var(--c2)"></i></div></div>`).join('') : '<div class="vazio">Sem despesas pagas ainda.</div>'}</div>
+    <div class="card"><h2>Próximos 30 dias</h2>
+      <div class="stats"><div class="stat"><small>Vai entrar</small><b class="pos">${brl(pr.entradas)}</b></div><div class="stat"><small>Vai sair</small><b class="neg">${brl(-pr.saidas)}</b></div>
+      <div class="stat"><small>Disponível hoje</small><b>${brl(pr.disponivel)}</b></div><div class="stat"><small>Disponível em ${dm(pr.fim)}</small><b class="${pr.disponivelProjetado >= 0 ? '' : 'neg'}">${brl(pr.disponivelProjetado)}</b></div></div>
+      ${pr.atrasados ? `<div class="aviso">${pr.atrasados} previsto(s) de datas passadas ainda sem valor pago. Eles não entram aqui.</div>` : ''}
+      <div class="lista">${pr.itens.length ? pr.itens.map(i => `<div class="it" style="cursor:default"><div class="d">${dm(i.data)}</div><div class="m"><div>${esc(i.desc)}${i.fatura ? '<span class="tag warn">fatura</span>' : ''}</div><small>${esc(i.categoria)}${i.meio ? ' · ' + esc(i.meio) : ''}</small></div><div class="v ${i.valor >= 0 ? 'pos' : 'neg'}">${num2(i.valor)}</div></div>`).join('') : '<div class="vazio">Nada previsto para os próximos 30 dias. Gere as recorrências do mês em Mais.</div>'}</div></div>
+    <button class="sec full" id="p_tab">${tab ? 'Ver gráficos' : 'Ver gráficos como tabela'}</button>`;
+    $('#p_tab').onclick = () => { P.tabela = !P.tabela; vPainel(); };
+    if (!tab) {
+      const liga = (id, det, fmt) => { const el = $(id); if (!el) return; el.onclick = e => {
+        const gi = e.target.closest('[data-i]'); if (!gi) return; const i = +gi.dataset.i;
+        el.querySelectorAll('[data-fundo]').forEach(r => r.setAttribute('opacity', +r.dataset.fundo === i ? 1 : 0));
+        $(det).innerHTML = fmt(i);
+      }; };
+      liga('#p_g1', '#p_d1', i => { const m = d.serie[i]; return `<b>${mes3(m.ym)}</b> · receitas <span class="pos">${num2(m.receitas)}</span> · despesas <span class="neg">${num2(m.despesas)}</span>${m.rendimentos ? ' · rendimentos ' + num2(m.rendimentos) : ''}`; });
+      liga('#p_g2', '#p_d2', i => `<b>${mes3(patrim[i].ym)}</b> · ${brl(patrim[i].valor)}`);
+    }
+  }).catch(falha);
 }
 
 // =====================================================
@@ -233,12 +339,13 @@ function vLancar() {
 function atualizaDestino() {
   const cat = $('#n_cat').value, n = natDe(cat), prec = precisaDestino(cat);
   $('#n_dest_box').style.display = prec ? 'block' : 'none';
-  if (prec) $('#n_dest_lbl').textContent = (ROTULO_DESTINO[n.nome] || 'Outra conta') + (n.nome === 'Transferência' ? '' : ' (opcional)');
+  if (prec) $('#n_dest_lbl').textContent = ehAntecip(cat) ? (cat === 'Antecipação' ? 'Quem vai devolver' : 'Devolução de quem') + ' (opcional)' : (ROTULO_DESTINO[n.nome] || 'Outra conta') + (n.nome === 'Transferência' ? '' : ' (opcional)');
+  if (prec && ehAntecip(cat) && !$('#n_dest').value) $('#n_dest').value = arPadrao();
   else $('#n_dest').value = '';
 }
 function itemLanc(l) {
   const s = sinalLanc(l), n = S.cad.naturezas.find(x => x.nome === l.natureza), v = valorLanc(l);
-  const neutro = !n || (n.efeito !== 'receita' && n.efeito !== 'despesa');
+  const neutro = !n || n.efeito === 'neutro';
   const cls = neutro ? 'neu' : (s > 0 ? 'pos' : 'neg');
   return `<div class="it" data-id="${esc(l.id)}" style="${l._salvando ? 'opacity:.6' : ''}"><div class="d">${dm(l.data)}</div>
     <div class="m"><div class="${l.efetivo == null ? 'pend' : ''}">${esc(l.desc)}${l._salvando ? '<span class="tag">salvando…</span>' : ''}${l.efetivo == null ? '<span class="tag warn">previsto</span>' : ''}</div>
@@ -305,7 +412,7 @@ function editar(l, aoSalvar) {
   const atual = () => {
     const prec = precisaDestino($('#e_cat').value), n = natDe($('#e_cat').value);
     $('#e_dest_box').style.display = prec ? 'block' : 'none';
-    if (prec) $('#e_dest_lbl').textContent = ROTULO_DESTINO[n.nome] || 'Outra conta';
+    if (prec) $('#e_dest_lbl').textContent = ehAntecip($('#e_cat').value) ? 'Quem vai devolver' : (ROTULO_DESTINO[n.nome] || 'Outra conta');
   };
   $('#e_cat').onchange = atual; atual();
   $('#e_x').onclick = fechar;
@@ -441,10 +548,13 @@ function vConsulta() {
     <div class="row" style="${C.preset === 'custom' ? '' : 'display:none'}" id="q_dt"><div><label>De</label><input type="date" id="q_ini" value="${C.ini}"></div><div><label>Até</label><input type="date" id="q_fim" value="${C.fim}"></div></div>
     <div class="row"><div><label>Conta</label><select id="q_conta">${optContas(C.conta, true)}</select></div><div><label>Parte da descrição</label><input id="q_txt" type="search" value="${esc(C.texto)}" placeholder="opcional"></div></div>
   </div>
+  ${C.grupo ? `<div class="aviso">Só o grupo <b>${esc(C.grupo)}</b>. <button class="mini" id="q_sg">Ver todos</button></div>` : ''}
   <div id="q_corpo"><div class="vazio">Carregando…</div></div>`;
   ligaSegExtrato();
+  if ($('#q_sg')) $('#q_sg').onclick = () => { C.grupo = ''; vConsulta(); };
   const ler = () => { C.natureza = $('#q_nat').value; C.categoria = $('#q_cat').value; C.conta = $('#q_conta').value; C.status = $('#q_st').value; C.texto = $('#q_txt').value.trim(); };
-  $('#q_nat').onchange = () => { ler(); C.categoria = ''; vConsulta(); };
+  $('#q_nat').onchange = () => { ler(); C.categoria = ''; C.grupo = ''; vConsulta(); };
+  $('#q_cat').addEventListener('change', () => { C.grupo = ''; if ($('#q_sg')) $('#q_sg').parentNode.remove(); });
   $('#q_cat').onchange = () => { ler(); rodaConsulta(); };
   $('#q_conta').onchange = () => { ler(); rodaConsulta(); };
   $('#q_st').onchange = () => { ler(); rodaConsulta(); };
@@ -457,7 +567,7 @@ function vConsulta() {
 async function rodaConsulta() {
   const C = S.cons, minha = JSON.stringify(C);
   try {
-    const d = await api('api_consultar', { ini: C.ini, fim: C.fim, categoria: C.categoria, natureza: C.natureza, conta: C.conta, texto: C.texto, status: C.status });
+    const d = await api('api_consultar', { ini: C.ini, fim: C.fim, categoria: C.categoria, natureza: C.natureza, conta: C.conta, texto: C.texto, status: C.status, grupo: C.grupo || '' });
     if (S.tab !== 'extrato' || S.ext.modo !== 'cat' || JSON.stringify(S.cons) !== minha) return;
     S.consLinhas = d.linhas;
     const solo = d.entradas === 0 ? 's' : d.saidas === 0 ? 'e' : '';
@@ -487,7 +597,8 @@ function periodoResumo() {
   const ini = addMes(R.ref, -11); return [ini + '-01', ultDia(R.ref), '12 meses até ' + mesNome(R.ref)];
 }
 function vResumo() {
-  const R = S.res, [ini, fim, rotulo] = periodoResumo();
+  const R = S.res; if (memo('resVis')) R.vis = memo('resVis');
+  const [ini, fim, rotulo] = periodoResumo();
   $('#view').innerHTML = `
   <div class="seg"><button data-m="mes" class="${R.modo === 'mes' ? 'on' : ''}">Mês</button><button data-m="ano" class="${R.modo === 'ano' ? 'on' : ''}">Ano</button><button data-m="12" class="${R.modo === '12' ? 'on' : ''}">12 meses</button></div>
   <div class="nav-mes"><button class="mini" id="r_ant">‹</button><strong>${esc(rotulo)}</strong><button class="mini" id="r_prox">›</button></div>
@@ -498,23 +609,48 @@ function vResumo() {
   $('#r_prox').onclick = () => { R.ref = addMes(R.ref, passo); vResumo(); };
   swrp('r|' + ini + '|' + fim, () => api('api_resumo', ini, fim)).then(d => {
     if (S.tab !== 'resumo') return;
-    const bloco = (tit, g, cls, nat) => {
-      const max = Math.max(1, ...g.itens.map(i => Math.max(i.projetado, i.realizado)));
-      return `<div class="card"><h2>${tit} <span class="${cls}" style="float:right">${brl(g.realizado)}</span></h2>
-        ${g.previsto || g.projetado !== g.realizado ? `<div class="sub" style="margin:-6px 0 8px">previsto ${brl(g.previsto)} · com o que falta pagar ${brl(g.projetado)}</div>` : ''}
-        ${g.itens.length ? g.itens.map(i => `<div style="margin:10px 0;cursor:pointer" data-cat="${esc(i.categoria)}" data-nat="${nat}"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(i.categoria)}</span><span style="font-variant-numeric:tabular-nums">${num2(i.realizado)}${i.previsto ? `<span class="sub"> / prev. ${num2(i.previsto)}</span>` : ''}</span></div>
-          <div class="barra"><i style="width:${Math.max(0, Math.min(100, i.realizado / max * 100))}%"></i></div></div>`).join('') : '<div class="vazio">Nada neste período.</div>'}</div>`;
+    const agrupa = g => {
+      const m = {};
+      g.itens.forEach(i => {
+        const x = m[i.grupo] || (m[i.grupo] = { categoria: i.grupo, grupo: i.grupo, previsto: 0, realizado: 0, projetado: 0, orcado: 0, _g: 1 });
+        x.previsto += i.previsto; x.realizado += i.realizado; x.projetado += i.projetado; x.orcado += i.orcado || 0;
+      });
+      return Object.values(m).sort((a, b) => b.projetado - a.projetado);
     };
+    const bloco = (tit, g, cls, nat, comGrupo) => {
+      const itens = comGrupo && R.vis === 'grupo' ? agrupa(g) : g.itens;
+      const max = Math.max(1, ...itens.map(i => Math.max(i.projetado, i.realizado)));
+      const linha = i => {
+        const orc = i.orcado > 0 ? i.orcado : 0, estourou = orc && i.realizado > orc;
+        const larg = orc ? Math.min(100, i.realizado / orc * 100) : Math.max(0, Math.min(100, i.realizado / max * 100));
+        const alvo = i._g ? `data-grp="${esc(i.grupo)}"` : `data-cat="${esc(i.categoria)}"`;
+        return `<div style="margin:10px 0;cursor:pointer" ${alvo} data-nat="${nat}"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(i.categoria)}</span><span style="font-variant-numeric:tabular-nums">${num2(i.realizado)}${orc ? `<span class="sub"> de ${num2(orc)}</span>` : (i.previsto ? `<span class="sub"> / prev. ${num2(i.previsto)}</span>` : '')}</span></div>
+          <div class="barra"><i class="${estourou ? 'est' : ''}" style="width:${larg}%"></i></div>${estourou ? `<div class="sub neg">passou ${num2(i.realizado - orc)} do orçado</div>` : ''}</div>`;
+      };
+      return `<div class="card"><h2>${tit} <span class="${cls}" style="float:right">${brl(g.realizado)}</span></h2>
+        ${g.orcado ? `<div class="sub" style="margin:-6px 0 8px">orçado ${brl(g.orcado)} (só das categorias com orçamento)</div>` : ''}
+        ${g.previsto || g.projetado !== g.realizado ? `<div class="sub" style="margin:-6px 0 8px">previsto ${brl(g.previsto)} · com o que falta pagar ${brl(g.projetado)}</div>` : ''}
+        ${comGrupo ? `<div class="seg" style="margin:0 0 6px"><button data-vis="cat" class="${R.vis === 'cat' ? 'on' : ''}">Por categoria</button><button data-vis="grupo" class="${R.vis === 'grupo' ? 'on' : ''}">Por grupo</button></div>` : ''}
+        ${itens.length ? itens.map(linha).join('') : '<div class="vazio">Nada neste período.</div>'}</div>`;
+    };
+    const rend = d.rendimentos, temRend = rend.realizado || rend.projetado;
+    const rotFora = { 'Aplicação': 'Aplicado (dinheiro que saiu da conta para investir)', 'Resgate': 'Resgatado das aplicações', 'Compromisso': 'Consórcio e outros compromissos pagos' };
     $('#r_corpo').innerHTML = `
       <div class="stats"><div class="stat"><small>Receitas</small><b class="pos">${brl(d.receitas.realizado)}</b></div>
       <div class="stat"><small>Despesas</small><b class="neg">${brl(d.despesas.realizado)}</b></div>
-      <div class="stat"><small>Resultado</small><b class="${d.resultadoRealizado >= 0 ? 'pos' : 'neg'}">${brl(d.resultadoRealizado)}</b></div>
+      <div class="stat"><small>Resultado do mês a mês</small><b class="${d.resultadoRealizado >= 0 ? 'pos' : 'neg'}">${brl(d.resultadoRealizado)}</b></div>
       <div class="stat"><small>Com o que falta pagar</small><b>${brl(d.resultadoProjetado)}</b></div></div>
-      ${bloco('Receitas', d.receitas, 'pos', 'Receita')}${bloco('Despesas', d.despesas, 'neg', 'Despesa')}
-      <p class="sub">Transferências, aplicações, resgates e pagamento de fatura ficam de fora: não são receita nem despesa. Toque numa categoria para ver os lançamentos.</p>`;
+      ${temRend ? `<div class="stats"><div class="stat"><small>Rendimentos das aplicações</small><b class="pos">${brl(rend.realizado)}</b></div>
+        <div class="stat"><small>Resultado com rendimentos</small><b class="${d.resultadoTotalRealizado >= 0 ? 'pos' : 'neg'}">${brl(d.resultadoTotalRealizado)}</b></div></div>` : ''}
+      ${bloco('Receitas', d.receitas, 'pos', 'Receita', false)}${bloco('Despesas', d.despesas, 'neg', 'Despesa', true)}
+      ${d.fora.length ? `<div class="card"><h2>Fora do resultado</h2>${d.fora.map(f => `<div style="display:flex;justify-content:space-between;gap:8px;margin:8px 0"><span>${esc(rotFora[f.natureza] || f.natureza)}</span><span style="font-variant-numeric:tabular-nums">${num2(f.realizado)}</span></div>`).join('')}
+        <p class="sub">É dinheiro seu que mudou de lugar ou virou um bem. Não conta como receita nem despesa.</p></div>` : ''}
+      <p class="sub">Transferências e pagamento de fatura também ficam de fora. Toque numa linha para ver os lançamentos.</p>`;
     $('#r_corpo').onclick = e => {
-      const r = e.target.closest('[data-cat]'); if (!r) return;
-      S.cons = { preset: 'custom', ini, fim, categoria: r.dataset.cat, natureza: r.dataset.nat, conta: '', texto: '', status: 'todos' };
+      const v = e.target.closest('[data-vis]');
+      if (v) { R.vis = v.dataset.vis; memo('resVis', R.vis); return vResumo(); }
+      const r = e.target.closest('[data-cat],[data-grp]'); if (!r) return;
+      S.cons = { preset: 'custom', ini, fim, categoria: r.dataset.cat || '', grupo: r.dataset.grp || '', natureza: r.dataset.nat, conta: '', texto: '', status: 'todos' };
       S.ext.modo = 'cat'; ir('extrato');
     };
   }).catch(falha);
@@ -523,7 +659,7 @@ function vResumo() {
 // =====================================================
 // SALDOS
 // =====================================================
-const CLASSES = [['corrente', 'Contas correntes'], ['dinheiro', 'Dinheiro'], ['beneficio', 'Benefícios'], ['aplicacao', 'Aplicações'], ['emprestimo', 'Emprestado (a receber)'], ['cartao', 'Cartões (a pagar)'], ['moeda', 'Moeda estrangeira'], ['outro', 'Outros']];
+const CLASSES = [['corrente', 'Contas correntes'], ['dinheiro', 'Dinheiro'], ['beneficio', 'Benefícios'], ['aplicacao', 'Aplicações'], ['emprestimo', 'A receber (por pessoa)'], ['cartao', 'Cartões (a pagar)'], ['moeda', 'Moeda estrangeira'], ['outro', 'Outros']];
 function vSaldos() {
   $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
   swrp('s', () => Promise.all([api('api_saldos', S.hoje), api('api_pendencias')])).then(([lista, pend]) => {
@@ -635,10 +771,10 @@ function vFaturas() {
 // MAIS: recorrências e cadastros
 // =====================================================
 function vMais() {
-  $('#view').innerHTML = `<div class="seg"><button data-s="rec" class="${S.mais === 'rec' ? 'on' : ''}">Recorrências</button><button data-s="contas" class="${S.mais === 'contas' ? 'on' : ''}">Contas</button><button data-s="cats" class="${S.mais === 'cats' ? 'on' : ''}">Categorias</button></div><div id="m_corpo"></div>
+  $('#view').innerHTML = `<div class="seg"><button data-s="rec" class="${S.mais === 'rec' ? 'on' : ''}">Recorrências</button><button data-s="contas" class="${S.mais === 'contas' ? 'on' : ''}">Contas</button><button data-s="cats" class="${S.mais === 'cats' ? 'on' : ''}">Categorias</button><button data-s="orc" class="${S.mais === 'orc' ? 'on' : ''}">Orçamento</button></div><div id="m_corpo"></div>
   <p class="sub" style="text-align:center"><a href="${esc(S.planilha)}" target="_blank" style="color:var(--pri)">Abrir a planilha</a></p>`;
   document.querySelectorAll('.seg button').forEach(b => b.onclick = () => { S.mais = b.dataset.s; vMais(); });
-  ({ rec: mRec, contas: mContas, cats: mCats })[S.mais]();
+  ({ rec: mRec, contas: mContas, cats: mCats, orc: mOrc })[S.mais]();
 }
 function mRec() {
   const mesAtual = S.hoje.slice(0, 7);
@@ -685,6 +821,25 @@ function formRec(r) {
     } catch (e) { falha(e); }
   };
 }
+function mOrc() {
+  $('#m_corpo').innerHTML = '<div class="vazio">Carregando…</div>';
+  swrp('orc', () => api('api_orcamento')).then(lista => {
+    if (S.tab !== 'mais' || S.mais !== 'orc') return;
+    const grupos = {}; lista.forEach(x => (grupos[x.grupo] = grupos[x.grupo] || []).push(x));
+    const tot = lista.reduce((t, x) => t + x.orcado, 0), med = lista.reduce((t, x) => t + x.media, 0);
+    $('#m_corpo').innerHTML = `<div class="card"><p class="sub" style="margin:0">Quanto você quer gastar por mês em cada categoria. Em branco, a categoria fica sem meta. A média é dos últimos 12 meses fechados.</p>
+      <div class="stats" style="margin:10px 0 0"><div class="stat"><small>Orçado por mês</small><b id="o_tot">${brl(tot)}</b></div><div class="stat"><small>Média real por mês</small><b>${brl(med)}</b></div></div></div>
+      ${Object.keys(grupos).sort(ptSort).map(g => `<h2>${esc(g)}</h2><div class="card">${grupos[g].sort((a, b) => ptSort(a.categoria, b.categoria)).map(x => `<div class="row" style="align-items:center;margin:8px 0"><div style="flex:1.4"><div>${esc(x.categoria)}</div><small class="sub">média ${num2(x.media)}</small></div><input data-oc="${esc(x.categoria)}" data-md="${x.media}" inputmode="decimal" placeholder="—" value="${x.orcado ? num2(x.orcado) : ''}" style="text-align:right"></div>`).join('')}</div>`).join('')}
+      <div class="acoes"><button class="sec" id="o_med">Preencher vazios com a média</button><button class="pri" id="o_ok">Salvar orçamento</button></div>`;
+    const soma = () => { let t = 0; document.querySelectorAll('[data-oc]').forEach(i => t += num(i.value) || 0); $('#o_tot').textContent = brl(t); };
+    $('#m_corpo').oninput = soma;
+    $('#o_med').onclick = () => { document.querySelectorAll('[data-oc]').forEach(i => { if (!i.value && +i.dataset.md > 0) i.value = num2(Math.round(+i.dataset.md)); }); soma(); };
+    $('#o_ok').onclick = async () => {
+      const itens = [...document.querySelectorAll('[data-oc]')].map(i => ({ categoria: i.dataset.oc, orcado: num(i.value) })).filter(x => x.orcado > 0);
+      try { const n = await api('api_salvarOrcamento', itens); toast(n + ' categoria(s) com orçamento'); } catch (e) { falha(e); }
+    };
+  }).catch(falha);
+}
 async function recarregaCad() { S.cad = await api('api_cadastros'); }
 function mContas() {
   $('#m_corpo').innerHTML = `<div class="card lista">${S.cad.contas.map(c => `<div class="it" data-c="${esc(c.chave)}"><div class="m"><div>${esc(c.chave)}${c.ativo ? '' : '<span class="tag">inativa</span>'}</div><small>${c.classe}${c.faturaDe ? ' · fatura junto com ' + esc(c.faturaDe) : ''}${c.diaFech ? ' · fecha ' + c.diaFech + ' vence ' + c.diaVenc : ''}</small></div><div class="v">${c.saldoInicial != null ? num2(c.saldoInicial) : ''}</div></div>`).join('')}</div>
@@ -716,7 +871,7 @@ function formConta(c) {
 }
 function mCats() {
   const g = {}; S.cad.categorias.forEach(c => (g[c.natureza] = g[c.natureza] || []).push(c));
-  $('#m_corpo').innerHTML = Object.keys(g).map(n => `<h2>${esc(n)}</h2><div class="card lista">${g[n].sort((a, b) => ptSort(a.descricao, b.descricao)).map(c => `<div class="it" data-k="${esc(c.descricao)}"><div class="m"><div>${esc(c.descricao)}${c.ativo ? '' : '<span class="tag">inativa</span>'}</div></div></div>`).join('')}</div>`).join('') +
+  $('#m_corpo').innerHTML = Object.keys(g).map(n => `<h2>${esc(n)}</h2><div class="card lista">${g[n].sort((a, b) => ptSort(a.descricao, b.descricao)).map(c => `<div class="it" data-k="${esc(c.descricao)}"><div class="m"><div>${esc(c.descricao)}${c.ativo ? '' : '<span class="tag">inativa</span>'}</div>${c.grupo ? `<small>${esc(c.grupo)}</small>` : ''}</div></div>`).join('')}</div>`).join('') +
     '<button class="sec full" id="k_nova">+ Nova categoria</button>';
   $('#m_corpo').onclick = e => { const it = e.target.closest('[data-k]'); if (it) formCat(catDe(it.dataset.k)); };
   $('#k_nova').onclick = () => formCat({ descricao: '', natureza: 'Despesa', ativo: true });
@@ -726,12 +881,13 @@ function formCat(c) {
   abrir(`<h2>${novo ? 'Nova categoria' : esc(c.descricao)}</h2>
   ${novo ? '<label>Nome</label><input id="t_nome">' : ''}
   <label>Natureza</label><select id="t_nat">${S.cad.naturezas.map(n => `<option ${n.nome === c.natureza ? 'selected' : ''}>${esc(n.nome)}</option>`).join('')}</select>
+  <label>Grupo (para somar categorias parecidas)</label><input id="t_gr" list="t_grl" value="${esc(c.grupo || '')}" placeholder="Ex.: Moradia"><datalist id="t_grl">${[...new Set(S.cad.categorias.map(x => x.grupo).filter(Boolean))].map(g => `<option value="${esc(g)}">`).join('')}</datalist>
   <p class="sub">Mudar a natureza vale para lançamentos novos. O histórico guarda a natureza que tinha na época.</p>
   <label style="display:flex;align-items:center;color:var(--tx)"><input type="checkbox" id="t_at" ${c.ativo ? 'checked' : ''}> Ativa</label>
   <div class="acoes"><button class="pri" id="t_ok">Salvar</button><button class="sec" id="t_x">Cancelar</button></div>`);
   $('#t_x').onclick = fechar;
   $('#t_ok').onclick = async () => {
-    try { await api('api_salvarCategoria', { descricao: novo ? $('#t_nome').value : c.descricao, natureza: $('#t_nat').value, ativo: $('#t_at').checked }); await recarregaCad(); fechar(); toast('Salvo'); mCats(); }
+    try { await api('api_salvarCategoria', { descricao: novo ? $('#t_nome').value : c.descricao, natureza: $('#t_nat').value, grupo: $('#t_gr').value, ativo: $('#t_at').checked }); await recarregaCad(); fechar(); toast('Salvo'); mCats(); }
     catch (e) { falha(e); }
   };
 }
