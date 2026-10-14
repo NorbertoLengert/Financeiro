@@ -24,6 +24,11 @@ function onOpen() {
     .addItem('Importar recorrentes (aba ImportarRecorrentes)', 'importarRecorrentes')
     .addSeparator()
     .addItem('Atualizar para a versão 4 (grupos, orçamento, painel)', 'migrarV4')
+    .addSeparator()
+    .addItem('Fazer backup agora', 'backupAgora')
+    .addItem('Ligar backup semanal', 'ligarBackupSemanal')
+    .addItem('Desligar backup semanal', 'desligarBackupSemanal')
+    .addSeparator()
     .addItem('Atualizar cadastros no aplicativo', 'atualizarCadastros')
     .addItem('Mostrar endereço do aplicativo', 'mostrarEndereco')
     .addToUi();
@@ -292,8 +297,11 @@ function grupoSugerido_(nome, natureza) {
 // ---------- migração para a versão 4 (pode rodar mais de uma vez) ----------
 function migrarV4() { mostrarRelatorio_('versão 4', migrarV4_()); }
 function migrarV4_() {
+  var aviso = '';
+  try { fazerBackup_('antes da versão 4'); aviso = 'Backup feito antes de mexer nos dados (pasta "' + BACKUP_PASTA + '").'; }
+  catch (e) { aviso = 'ATENÇÃO: não consegui fazer o backup antes (' + e.message + '). A migração seguiu mesmo assim.'; }
   return comLock_(function () {
-    var ss = ss_(), linhas = [];
+    var ss = ss_(), linhas = [aviso];
     // 1. abas e cabeçalhos
     ['Orcamento', 'Categorias'].forEach(function (nome) {
       var sh = ss.getSheetByName(nome) || ss.insertSheet(nome);
@@ -352,4 +360,60 @@ function migrarV4_() {
     limparCache_();
     return { trocados: trocados, linhas: linhas };
   });
+}
+
+// ---------- backup ----------
+var BACKUP_PASTA = 'Backups Finanças';
+var BACKUP_MANTER = 12;
+
+function props_() { return PropertiesService.getScriptProperties(); }
+function agora_() {
+  var d = new Date();
+  return dataIso_(d) + ' ' + Fin.pad(d.getHours()) + ':' + Fin.pad(d.getMinutes());
+}
+
+// Copia a planilha inteira para a pasta "Backups Finanças" (ao lado da planilha) e guarda só as últimas cópias.
+function fazerBackup_(motivo) {
+  var arq = DriveApp.getFileById(ss_().getId());
+  var pais = arq.getParents();
+  var pai = pais.hasNext() ? pais.next() : DriveApp.getRootFolder();
+  var achadas = pai.getFoldersByName(BACKUP_PASTA);
+  var pasta = achadas.hasNext() ? achadas.next() : pai.createFolder(BACKUP_PASTA);
+  var carimbo = agora_();
+  var copia = arq.makeCopy('Backup ' + carimbo + (motivo ? ' (' + motivo + ')' : '') + ' - ' + ss_().getName(), pasta);
+  var lista = [], it = pasta.getFiles();
+  while (it.hasNext()) { var f = it.next(); if (String(f.getName()).indexOf('Backup ') === 0) lista.push(f); }
+  lista.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  lista.slice(BACKUP_MANTER).forEach(function (f) { f.setTrashed(true); });
+  props_().setProperty('BACKUP_ULTIMO', carimbo);
+  props_().deleteProperty('BACKUP_ERRO');
+  return { nome: copia.getName(), url: copia.getUrl(), guardados: Math.min(lista.length, BACKUP_MANTER) };
+}
+
+function backupAgora() {
+  var msg;
+  try { var r = fazerBackup_('manual'); msg = 'Backup feito:\n' + r.nome + '\n\nGuardo as últimas ' + BACKUP_MANTER + ' cópias na pasta "' + BACKUP_PASTA + '".'; }
+  catch (e) { msg = 'Não consegui fazer o backup: ' + e.message; }
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e2) { Logger.log(msg); }
+}
+
+// Chamada pelo gatilho semanal. Se falhar, o app avisa na aba Mais.
+function backupAutomatico() {
+  try { fazerBackup_('semanal'); }
+  catch (e) { props_().setProperty('BACKUP_ERRO', agora_() + ': ' + e.message); }
+}
+
+function backupAtivo_() {
+  return ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'backupAutomatico'; });
+}
+function ligarBackupSemanal() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'backupAutomatico') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('backupAutomatico').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
+  var msg = 'Backup semanal ligado (domingo, de madrugada).';
+  try { fazerBackup_('ao ligar'); msg += '\nJá fiz o primeiro agora.'; } catch (e) { msg += '\nMas o primeiro falhou: ' + e.message; }
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e2) { Logger.log(msg); }
+}
+function desligarBackupSemanal() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'backupAutomatico') ScriptApp.deleteTrigger(t); });
+  try { SpreadsheetApp.getUi().alert('Backup semanal desligado.'); } catch (e) {}
 }

@@ -417,4 +417,11 @@ function api_salvarCategoria(c) {
   });
 }
 
+function api_backupStatus() {
+  var p = props_();
+  var ativo = false;
+  try { ativo = backupAtivo_(); } catch (e) {}
+  return { ativo: ativo, ultimo: p.getProperty('BACKUP_ULTIMO') || '', erro: p.getProperty('BACKUP_ERRO') || '' };
+}
+
 function api_cadastros() { return cadastrosParaTela_(lerCadastros_()); }

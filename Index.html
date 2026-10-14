@@ -772,7 +772,16 @@ function vFaturas() {
 // =====================================================
 function vMais() {
   $('#view').innerHTML = `<div class="seg"><button data-s="rec" class="${S.mais === 'rec' ? 'on' : ''}">Recorrências</button><button data-s="contas" class="${S.mais === 'contas' ? 'on' : ''}">Contas</button><button data-s="cats" class="${S.mais === 'cats' ? 'on' : ''}">Categorias</button><button data-s="orc" class="${S.mais === 'orc' ? 'on' : ''}">Orçamento</button></div><div id="m_corpo"></div>
+  <div id="m_bk"></div>
   <p class="sub" style="text-align:center"><a href="${esc(S.planilha)}" target="_blank" style="color:var(--pri)">Abrir a planilha</a></p>`;
+  api('api_backupStatus').then(b => {
+    const el = $('#m_bk'); if (!el) return;
+    const dias = b.ultimo ? Math.floor((new Date(S.hoje + 'T12:00:00') - new Date(b.ultimo.slice(0, 10) + 'T12:00:00')) / 86400000) : null;
+    if (b.erro) el.innerHTML = `<div class="aviso">O último backup automático falhou: ${esc(b.erro)}. Na planilha, use Finanças > Fazer backup agora.</div>`;
+    else if (!b.ativo) el.innerHTML = '<div class="aviso">Backup semanal desligado. Na planilha, use o menu Finanças > Ligar backup semanal.</div>';
+    else if (dias == null || dias > 10) el.innerHTML = `<div class="aviso">${dias == null ? 'Ainda não há backup.' : 'Último backup há ' + dias + ' dias.'} Confira o gatilho na planilha.</div>`;
+    else el.innerHTML = `<p class="sub" style="text-align:center">Último backup: ${dmy(b.ultimo.slice(0, 10))}</p>`;
+  }).catch(() => {});
   document.querySelectorAll('.seg button').forEach(b => b.onclick = () => { S.mais = b.dataset.s; vMais(); });
   ({ rec: mRec, contas: mContas, cats: mCats, orc: mOrc })[S.mais]();
 }
