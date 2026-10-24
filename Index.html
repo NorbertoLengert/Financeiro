@@ -709,27 +709,33 @@ function registrarSaldo(chave) {
 // CARTÕES
 // =====================================================
 const addDia30 = () => { const d = new Date(S.hoje + 'T12:00:00'); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); };
-function vFaturas() {
-  $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
-  const todos = memo('cartoesTodos') === '1';
-  swrp('f|' + todos, () => api('api_faturas', todos)).then(gs => {
-    if (S.tab !== 'faturas') return;
-    gs = gs.filter(g => g.faturas.length || g.diaFech || !g.ativo);
-    const filtro = `<div class="seg"><button data-cf="0" class="${todos ? '' : 'on'}">Só ativos</button><button data-cf="1" class="${todos ? 'on' : ''}">Ativos e inativos</button></div>`;
-    $('#view').innerHTML = filtro + (gs.length ? gs.map(g => `
-      <div class="card"><h2 style="display:flex;align-items:center;gap:8px">${esc(g.chave)}${g.ativo ? '' : '<span class="tag">inativo</span>'}<button class="mini" style="margin-left:auto" data-at="${esc(g.chave)}|${g.ativo ? 0 : 1}">${g.ativo ? 'Inativar' : 'Reativar'}</button></h2>
-      <div class="sub">${g.diaFech ? 'Fecha dia ' + g.diaFech + ', vence dia ' + g.diaVenc : 'Preencha fechamento e vencimento na aba Contas da planilha'}${g.contaPgto ? ' · paga com ' + esc(g.contaPgto) : ''}${g.adicionais.length ? '<br>Inclui: ' + g.adicionais.map(esc).join(', ') : ''}</div>
-      <div class="lista" style="margin-top:8px">${g.faturas.length ? g.faturas.map(f => `
-        <div class="it" style="flex-wrap:wrap" data-it="${esc(g.chave)}|${f.id}"><div class="m"><div>Fatura de ${MESES[+f.id.slice(5, 7) - 1]}/${f.id.slice(2, 4)}
+function itemFatura(g, f) {
+  return `        <div class="it" style="flex-wrap:wrap" data-it="${esc(g.chave)}|${f.id}"><div class="m"><div>Fatura de ${MESES[+f.id.slice(5, 7) - 1]}/${f.id.slice(2, 4)}
           <span class="tag ${f.status === 'paga' ? 'ok' : f.status === 'aberta' ? '' : 'warn'}">${f.status}</span></div>
           <small>fecha ${dm(f.fechamento)} · vence ${dm(f.vencimento)} · ${f.itens} compra(s)${f.pago ? ' · pago ' + num2(f.pago) : ''}${f.status === 'paga em parte' ? ' · falta ' + num2(f.restante) : ''}${f.divergente ? ' · agendado ' + num2(f.agendado) : ''}</small></div>
           <div class="v">${num2(f.total)}</div>
           ${f.status === 'agendada' && f.pagamento ? `<div style="flex-basis:100%;display:flex;gap:8px;justify-content:flex-end"><button class="mini" data-ok="${esc(f.pagamento.id)}|${f.pagamento.previsto}|${f.pagamento.data}">Confirmar pagamento</button><button class="mini" data-rm="${esc(f.pagamento.id)}">Remover agendamento</button></div>`
-            : (f.status !== 'paga' && f.vencimento >= addDia30() ? `<div style="flex-basis:100%;text-align:right"><button class="mini" data-pg="${esc(g.chave)}|${f.id}">Gerar pagamento</button></div>` : '')}</div>`).join('') : '<div class="vazio">Sem compras neste cartão.</div>'}</div></div>`).join('')
+            : (f.status !== 'paga' && f.vencimento >= addDia30() ? `<div style="flex-basis:100%;text-align:right"><button class="mini" data-pg="${esc(g.chave)}|${f.id}">Gerar pagamento</button></div>` : '')}</div>`;
+}
+function vFaturas() {
+  $('#view').innerHTML = '<div class="vazio">Carregando…</div>';
+  const todos = memo('cartoesTodos') === '1', todasFat = memo('faturasTodas') === '1';
+  swrp('f|' + todos + todasFat, () => api('api_faturas', todos, todasFat)).then(gs => {
+    if (S.tab !== 'faturas') return;
+    gs = gs.filter(g => g.faturas.length || g.diaFech || !g.ativo);
+    const filtro = `<div class="seg"><button data-cf="0" class="${todos ? '' : 'on'}">Só ativos</button><button data-cf="1" class="${todos ? 'on' : ''}">Ativos e inativos</button></div>
+      <div class="seg"><button data-ft="0" class="${todasFat ? '' : 'on'}">Recentes</button><button data-ft="1" class="${todasFat ? 'on' : ''}">Todas as faturas</button></div>`;
+    $('#view').innerHTML = filtro + (gs.length ? gs.map(g => `
+      <div class="card"><h2 style="display:flex;align-items:center;gap:8px">${esc(g.chave)}${g.ativo ? '' : '<span class="tag">inativo</span>'}<button class="mini" style="margin-left:auto" data-at="${esc(g.chave)}|${g.ativo ? 0 : 1}">${g.ativo ? 'Inativar' : 'Reativar'}</button></h2>
+      <div class="sub">${g.diaFech ? 'Fecha dia ' + g.diaFech + ', vence dia ' + g.diaVenc : 'Preencha fechamento e vencimento na aba Contas da planilha'}${g.contaPgto ? ' · paga com ' + esc(g.contaPgto) : ''}${g.adicionais.length ? '<br>Inclui: ' + g.adicionais.map(esc).join(', ') : ''}</div>
+      <div class="lista" style="margin-top:8px">${g.faturas.length ? g.faturas.map(f => itemFatura(g, f)).join('') : '<div class="vazio">Sem compras neste cartão.</div>'}${g.ocultas ? `<p class="sub" style="text-align:center">${g.ocultas} fatura(s) mais antigas escondidas. Toque em "Todas as faturas" para ver.</p>` : ''}</div>
+      ${g.futuras && g.futuras.length ? `<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Próximas faturas (${g.futuras.length}), geradas por parcelas e previstos</summary><div class="lista" style="margin-top:6px">${g.futuras.map(f => itemFatura(g, f)).join('')}</div></details>` : ''}</div>`).join('')
       : '<div class="vazio">Nenhum cartão ' + (todos ? 'cadastrado' : 'ativo') + '.</div>');
     $('#view').onclick = async e => {
       const cf = e.target.closest('[data-cf]');
       if (cf) { memo('cartoesTodos', cf.dataset.cf); return vFaturas(); }
+      const ft = e.target.closest('[data-ft]');
+      if (ft) { memo('faturasTodas', ft.dataset.ft); return vFaturas(); }
       const at = e.target.closest('[data-at]');
       if (at) {
         e.stopPropagation(); const [ch, v] = at.dataset.at.split('|');

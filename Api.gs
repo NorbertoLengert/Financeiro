@@ -282,13 +282,24 @@ function gruposCartao_(cad, incluirInativos) {
   return cad.contas.filter(function (c) { return (incluirInativos || c.ativo) && c.classe === 'cartao' && !c.faturaDe; });
 }
 
-function api_faturas(incluirInativos) {
+// Lista as faturas de 5 meses atrás até a próxima. As mais distantes no futuro (parcelas longas) vão para "futuras",
+// e as muito antigas ficam escondidas. Antes eram as 8 mais novas, e com parcelas de 12 meses a fatura atual sumia.
+function api_faturas(incluirInativos, todas) {
   var cad = lerCadastros_(), lancs = lerLancs_(), hoje = hoje_();
   return gruposCartao_(cad, !!incluirInativos).map(function (g) {
     var adicionais = cad.contas.filter(function (c) { return c.faturaDe === g.chave; }).map(function (c) { return c.chave; });
+    var todasFat = Fin.faturas(g, cad.contas, lancs, cad.nat, hoje);
+    var faturas = todasFat, futuras = [], ocultas = 0;
+    if (!todas) {
+      var atual = Fin.cicloFatura(hoje, g.diaFech || 1, g.diaVenc || 10).id;
+      var de = Fin.addMeses(atual, -5), ate = Fin.addMeses(atual, 1);
+      faturas = todasFat.filter(function (f) { return f.id >= de && f.id <= ate; });
+      futuras = todasFat.filter(function (f) { return f.id > ate; }).reverse();
+      ocultas = todasFat.filter(function (f) { return f.id < de; }).length;
+    }
     return {
       chave: g.chave, nome: g.nome, ativo: g.ativo, diaFech: g.diaFech, diaVenc: g.diaVenc, contaPgto: g.contaPgto, adicionais: adicionais,
-      faturas: Fin.faturas(g, cad.contas, lancs, cad.nat, hoje).slice(0, 8)
+      faturas: faturas, futuras: futuras, ocultas: ocultas
     };
   });
 }

@@ -23,3 +23,7 @@ Pode repetir: o que já existe não duplica. Confira a aba DePara (CC, CV e CM s
 ## Backup
 
 Menu Finanças: "Fazer backup agora", "Ligar backup semanal" e "Desligar backup semanal". As cópias ficam na pasta "Backups Finanças", ao lado da planilha, e o app guarda as últimas 12. Na primeira vez o Google pede autorização para acessar o Drive. A aba Mais do app avisa se o backup está desligado ou falhou.
+
+## Faturas na aba Cartões
+
+A lista mostra as faturas de 5 meses atrás até a próxima. Faturas mais distantes, geradas por parcelas longas, ficam recolhidas em "Próximas faturas". O botão "Todas" mostra tudo.
