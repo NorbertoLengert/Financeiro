@@ -327,9 +327,12 @@ function api_gerarPagamentoFatura(chaveGrupo, id) {
     var fat = Fin.faturas(g, cad.contas, lancs, cad.nat, hoje_()).filter(function (f) { return f.id === id; })[0];
     if (!fat) throw new Error('Fatura não encontrada.');
     if (fat.status === 'paga') throw new Error('Esta fatura já está paga.');
-    if (fat.pagamentos.length && !fat.pagamento) throw new Error('Já existe pagamento desta fatura na conta (' + fat.pagamentos.map(function (p) { return p.data; }).join(', ') + '). Não gerei outro para não duplicar.');
+    if (fat.pagamentos.length && !fat.pagamentos.some(function (p) { return p.gerado; })) throw new Error('Já existe pagamento desta fatura na conta (' + fat.pagamentos.map(function (p) { return p.data; }).join(', ') + '). Não gerei outro para não duplicar.');
     var base = Fin.pagamentoFatura(g, fat, CAT_CARTAO);
-    if (fat.pagamento) base.id = fat.pagamento.id;
+    // Reaproveita só um agendamento que ainda não foi pago. Pagamento já feito (mesmo parcial) nunca é sobrescrito:
+    // o que falta vira um lançamento novo.
+    var agendado = fat.pagamentos.filter(function (p) { return p.gerado && p.efetivo == null; })[0];
+    if (agendado) base.id = agendado.id;
     var o = normalizarLanc_(base, cad);
     gravarLanc_(o, cad.nat);
     return o;
